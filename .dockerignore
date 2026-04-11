@@ -1,0 +1,16 @@
+# Exclude non-essential files from Docker build context
+.git
+.gitignore
+*.md
+*.txt
+*.exe
+
+# Excluded plugins (not part of unified engine)
+github_trigger/
+googlesheets_action/
+
+# Individual plugin Dockerfiles (not needed for unified build)
+datetime_trigger/Dockerfile
+spotify_action/Dockerfile
+telegram_action/Dockerfile
+youtube_trigger/Dockerfile
