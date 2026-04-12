@@ -8,10 +8,26 @@ set -e
 
 BASE_PORT=8081
 
-# ── Plugin Registry ──────────────────────────────────────────────────────────
-# Format: binary_name:route_prefix
-# Binary names match the output of the Dockerfile build stage.
-PLUGINS="datetime_bin:datetime spotify_bin:spotify telegram_bin:telegram youtube_bin:youtube"
+# ── Plugin Registry (Automated) ──────────────────────────────────────────────
+PLUGINS=""
+if [ -f active_plugins.txt ]; then
+    echo "Dynamically loading plugins from active_plugins.txt..."
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip empty lines or comments
+        [ -z "$line" ] || [ "$(echo "$line" | cut -c1)" = "#" ] && continue
+        
+        # Derive binary name and prefix
+        # active_plugins.txt names: datetime_trigger, telegram_action, etc.
+        BINARY="${line}_bin"
+        PREFIX=$(echo "$line" | sed -E 's/_(trigger|action)//')
+        
+        PLUGINS="$PLUGINS ${BINARY}:${PREFIX}"
+    done < active_plugins.txt
+    PLUGINS=$(echo $PLUGINS | xargs) # trim
+else
+    # Fallback to hardcoded list if file is missing
+    PLUGINS="datetime_trigger_bin:datetime telegram_action_bin:telegram youtube_trigger_bin:youtube spotify_action_bin:spotify"
+fi
 
 # ── Generate nginx.conf ──────────────────────────────────────────────────────
 echo "Generating nginx.conf..."
@@ -24,6 +40,12 @@ events {
 http {
     server {
         listen 7860;
+
+        # Root status endpoint
+        location / {
+            return 200 '{"status": "ok"}';
+            add_header Content-Type application/json;
+        }
 
         # Global uptime endpoint
         location /health {
@@ -48,6 +70,11 @@ for ENTRY in $PLUGINS; do
             proxy_set_header X-Forwarded-Proto \$scheme;
             proxy_read_timeout 120s;
             proxy_connect_timeout 10s;
+        }
+
+        # Redirect /${PREFIX} to /${PREFIX}/
+        location = /${PREFIX} {
+            return 301 \$scheme://\$host\$request_uri/;
         }
 
 NGINX_LOCATION

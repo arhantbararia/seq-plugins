@@ -1,2 +1,4 @@
 datetime_trigger
 telegram_action
+youtube_trigger
+spotify_action

@@ -56,12 +56,12 @@ func (s *RegistrationService) Register() error {
 			"remove": "/telegram/remove",
 			"health": "/telegram/health",
 		},
-		AuthTypes:             []string{"BOT_TOKEN"},
+		AuthTypes: []string{"BOT_TOKEN"},
 		Capabilities: []models.PluginCapability{
 			{
 				UniqueKey:     "telegram_send_message",
 				Name:          "Send message",
-				Description:   "Sends a text message to a specified chat.",
+				Description:   "Sends a text message to a specified chat. Read https://arhantbararia.github.io/2026/04/12/telegram_bot_token-retrieval-process.html on how to get bot token and chat id ",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"chat_id": "string",
@@ -72,7 +72,7 @@ func (s *RegistrationService) Register() error {
 			{
 				UniqueKey:     "telegram_send_photo",
 				Name:          "Send photo",
-				Description:   "Sends a photo to a specified chat.",
+				Description:   "Sends a photo to a specified chat. Read https://arhantbararia.github.io/2026/04/12/telegram_bot_token-retrieval-process.html on how to get bot token and chat id",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"chat_id":  "string",
@@ -84,7 +84,7 @@ func (s *RegistrationService) Register() error {
 			{
 				UniqueKey:     "telegram_send_video",
 				Name:          "Send video",
-				Description:   "Sends a video to a specified chat.",
+				Description:   "Sends a video to a specified chat. Read https://arhantbararia.github.io/2026/04/12/telegram_bot_token-retrieval-process.html on how to get bot token and chat id",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"chat_id":  "string",
@@ -96,7 +96,7 @@ func (s *RegistrationService) Register() error {
 			{
 				UniqueKey:     "telegram_send_mp3",
 				Name:          "Send mp3",
-				Description:   "Sends an MP3 audio file to a specified chat.",
+				Description:   "Sends an MP3 audio file to a specified chat. Read https://arhantbararia.github.io/2026/04/12/telegram_bot_token-retrieval-process.html on how to get bot token and chat id",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"chat_id":  "string",

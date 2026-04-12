@@ -75,7 +75,7 @@ type RegistrationRequest struct {
 type PluginCapability struct {
 	UniqueKey     string                 `json:"unique_key"`     //datetime_every_hour_at
 	Name          string                 `json:"name"`           // Every Hour
-	Description   string                 `json:"description"`    // Triggers once every hour at a specific minute (MM).
+	Description   string                 `json:"description"`    // Triggers once every hour at a specific minute (MM). // also contains the requirements needed for this capability to work..
 	ComponentType string                 `json:"component_type"` //TRIGGER
 	ConfigSchema  map[string]interface{} `json:"config_schema"`  // {"scheduled_at": "string"} // "MM"
 	OutputSchema  map[string]interface{} `json:"output_schema"`  // {"check_time": "string"} // RFC3339 UTC timestamp when the trigger fired

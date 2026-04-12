@@ -11,25 +11,25 @@ WORKDIR /src
 COPY datetime_trigger/ ./datetime_trigger/
 RUN cd datetime_trigger && \
     go mod download && \
-    CGO_ENABLED=0 GOOS=linux go build -o /app/datetime_bin .
+    CGO_ENABLED=0 GOOS=linux go build -o /app/datetime_trigger_bin .
 
 # ── spotify_action ────────────────────────────────────────────────────────────
 COPY spotify_action/ ./spotify_action/
 RUN cd spotify_action && \
     go mod download && \
-    CGO_ENABLED=0 GOOS=linux go build -o /app/spotify_bin .
+    CGO_ENABLED=0 GOOS=linux go build -o /app/spotify_action_bin .
 
 # ── telegram_action ───────────────────────────────────────────────────────────
 COPY telegram_action/ ./telegram_action/
 RUN cd telegram_action && \
     go mod download && \
-    CGO_ENABLED=0 GOOS=linux go build -o /app/telegram_bin .
+    CGO_ENABLED=0 GOOS=linux go build -o /app/telegram_action_bin .
 
 # ── youtube_trigger ───────────────────────────────────────────────────────────
 COPY youtube_trigger/ ./youtube_trigger/
 RUN cd youtube_trigger && \
     go mod download && \
-    CGO_ENABLED=0 GOOS=linux go build -o /app/youtube_bin .
+    CGO_ENABLED=0 GOOS=linux go build -o /app/youtube_trigger_bin .
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -49,13 +49,14 @@ RUN mkdir -p /var/lib/nginx/tmp /var/log/nginx /run/nginx && \
 WORKDIR /app
 
 # Copy compiled binaries from builder
-COPY --from=builder /app/datetime_bin .
-COPY --from=builder /app/spotify_bin .
-COPY --from=builder /app/telegram_bin .
-COPY --from=builder /app/youtube_bin .
+COPY --from=builder /app/datetime_trigger_bin .
+COPY --from=builder /app/spotify_action_bin .
+COPY --from=builder /app/telegram_action_bin .
+COPY --from=builder /app/youtube_trigger_bin .
 
-# Copy startup script
+# Copy startup script and config
 COPY start.sh .
+COPY active_plugins.txt .
 RUN chmod +x start.sh && chown user:user start.sh
 
 # Switch to non-root user

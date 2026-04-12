@@ -10,6 +10,7 @@ import (
 	"spotify_action/models"
 	"spotify_action/services"
 	"spotify_action/worker"
+	"strings"
 	"sync"
 
 	"time"
@@ -87,6 +88,50 @@ func stringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
+func extractTrackID(m map[string]interface{}, key string) string {
+	val := stringField(m, key)
+	if val == "" {
+		return ""
+	}
+
+	// Handle Spotify URL: https://open.spotify.com/track/69ivV09HWiq7T7nIkFe3nq?si=...
+	if strings.Contains(val, "open.spotify.com/track/") {
+		parts := strings.Split(val, "track/")
+		if len(parts) > 1 {
+			id := parts[1]
+			// Strip query parameters if present
+			if idx := strings.Index(id, "?"); idx != -1 {
+				id = id[:idx]
+			}
+			return strings.TrimSpace(id)
+		}
+	}
+
+	return val
+}
+
+func extractPlaylistID(m map[string]interface{}, key string) string {
+	val := stringField(m, key)
+	if val == "" {
+		return ""
+	}
+
+	// Handle Spotify URL: https://open.spotify.com/playlist/6r64LmFqWMygcZSIApMY5a?si=7538b
+	if strings.Contains(val, "open.spotify.com/track/") {
+		parts := strings.Split(val, "playlist/")
+		if len(parts) > 1 {
+			id := parts[1]
+			// Strip query parameters if present
+			if idx := strings.Index(id, "?"); idx != -1 {
+				id = id[:idx]
+			}
+			return strings.TrimSpace(id)
+		}
+	}
+
+	return val
+}
+
 // buildActionConfig extracts typed fields from the raw config map.
 func buildActionConfig(req SetupPayload) models.ActionConfig {
 	cfg := models.ActionConfig{
@@ -114,9 +159,9 @@ func buildActionConfig(req SetupPayload) models.ActionConfig {
 	cfg.RawConfig = rawCfg
 
 	// Extract string fields from config map
-	cfg.TrackID = stringField(req.Config, "track_id")
+	cfg.TrackID = extractTrackID(req.Config, "track_id")
 	cfg.TrackQuery = stringField(req.Config, "track_query")
-	cfg.PlaylistID = stringField(req.Config, "playlist_id")
+	cfg.PlaylistID = extractPlaylistID(req.Config, "playlist_id")
 
 	return cfg
 }

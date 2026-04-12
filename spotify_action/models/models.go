@@ -76,7 +76,7 @@ type RegistrationRequest struct {
 type PluginCapability struct {
 	UniqueKey     string                 `json:"unique_key"`     // spotify_create_playlist
 	Name          string                 `json:"name"`           // Create Playlist
-	Description   string                 `json:"description"`    // Creates a new playlist in the user's Spotify account.
+	Description   string                 `json:"description"`    // Creates a new playlist in the user's Spotify account.// also contains the requirements needed for this capability to work. Like sptify playlist id. in simple words. 
 	ComponentType string                 `json:"component_type"` //ACTION
 	ConfigSchema  map[string]interface{} `json:"config_schema"`  // {"playlist_name": "string", "description": "string", "public": "boolean"}
 	OutputSchema  map[string]interface{} `json:"output_schema"`  // {"playlist_id": "string", "playlist_url": "string"}

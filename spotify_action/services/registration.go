@@ -54,12 +54,12 @@ func (s *RegistrationService) Register() error {
 			"remove": "/spotify/remove",
 			"health": "/spotify/health",
 		},
-		AuthTypes:             []string{"OAUTH2"},
+		AuthTypes: []string{"OAUTH2"},
 		Capabilities: []models.PluginCapability{
 			{
 				UniqueKey:     "spotify_add_to_queue",
 				Name:          "Add track to playback queue",
-				Description:   "Adds a track to the user's playback queue.",
+				Description:   "Adds a track to the user's playback queue. TrackID: eg.https://open.spotify.com/track/5...A?si=2...d , Track Query: eg. Bohemian Rhapsody",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"track_id":    "string",
@@ -70,7 +70,7 @@ func (s *RegistrationService) Register() error {
 			{
 				UniqueKey:     "spotify_add_to_playlist_by_id",
 				Name:          "Add track to a playlist by TrackID",
-				Description:   "Adds a specific track to a playlist using their IDs.",
+				Description:   "Adds a specific track to a playlist using their IDs. TrackID: eg.https://open.spotify.com/track/5...A?si=2...d , PlaylistID: eg. https://open.spotify.com/playlist/6...5a?si=6ee..7c ",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"track_id":    "string",
@@ -81,7 +81,7 @@ func (s *RegistrationService) Register() error {
 			{
 				UniqueKey:     "spotify_save_track",
 				Name:          "Save a track",
-				Description:   "Saves a track to the current user's 'Your Music' library.",
+				Description:   "Saves a track to the current user's 'Your Music' library. TrackID: eg.https://open.spotify.com/track/5...A?si=2...d , Track Query: eg. Bohemian Rhapsody",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"track_id":    "string",
@@ -92,7 +92,7 @@ func (s *RegistrationService) Register() error {
 			{
 				UniqueKey:     "spotify_follow_playlist",
 				Name:          "Follow a playlist",
-				Description:   "Add the current user as a follower of a playlist.",
+				Description:   "Add the current user as a follower of a playlist. PlaylistID: eg. https://open.spotify.com/playlist/6...5a?si=6ee..7c ",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"playlist_id": "string",
@@ -102,7 +102,7 @@ func (s *RegistrationService) Register() error {
 			{
 				UniqueKey:     "spotify_add_to_playlist",
 				Name:          "Add track to a playlist",
-				Description:   "Adds a track (by query or ID) to a playlist.",
+				Description:   "Adds a track (by query or ID) to a playlist. TrackID: eg.https://open.spotify.com/track/5...A?si=2...d ,  Track Query: eg. Bohemian Rhapsody, PlaylistID: eg. https://open.spotify.com/playlist/6...5a?si=6ee..7c ",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
 					"track_id":    "string", // optional if query provided
