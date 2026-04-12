@@ -2,7 +2,6 @@
 .git
 .gitignore
 *.md
-*.txt
 *.exe
 
 # Excluded plugins (not part of unified engine)
