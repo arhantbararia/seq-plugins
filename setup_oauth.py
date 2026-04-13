@@ -1,0 +1,87 @@
+import os
+import psycopg2
+import json
+import sys
+
+def setup_oauth():
+    # Retrieve environment variables
+    db_url = os.environ.get("GOAT_DB_URL")
+    google_id = os.environ.get("GOOGLE_CLIENT_ID")
+    google_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    spotify_id = os.environ.get("SPOTIFY_CLIENT_ID")
+    spotify_secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
+
+    # Validate environment variables
+    missing = []
+    if not db_url: missing.append("GOAT_DB_URL")
+    if not google_id: missing.append("GOOGLE_CLIENT_ID")
+    if not google_secret: missing.append("GOOGLE_CLIENT_SECRET")
+    
+
+    if missing:
+        print(f"Missing required environment variables: {', '.join(missing)}")
+        sys.exit(1)
+
+    try:
+        # Connect to PostgreSQL
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+
+        # 1. Update YouTube Provider
+        youtube_metadata = {
+            "oauth": {
+                "client_id": google_id,
+                "client_secret": google_secret,
+                "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+                "token_url": "https://oauth2.googleapis.com/token",
+                "scopes": "https://www.googleapis.com/auth/youtube.readonly",
+                "redirect_uri": "https://sequels.diy/auth/plugin/callback"
+            }
+        }
+        
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET auth_types = %s,
+                metadata_schema = %s
+            WHERE name = 'YouTube';
+            """,
+            (json.dumps(["oauth2"]), json.dumps(youtube_metadata))
+        )
+        print(f"YouTube update executed. Rows affected: {cur.rowcount}")
+
+        # 2. Update Spotify Provider
+        spotify_metadata = {
+            "oauth": {
+                "client_id": spotify_id,
+                "client_secret": spotify_secret,
+                "authorize_url": "https://accounts.spotify.com/authorize",
+                "token_url": "https://accounts.spotify.com/api/token",
+                "scopes": "playlist-modify-public playlist-modify-private user-library-modify playlist-read-private user-read-private",
+                "redirect_uri": "https://sequels.diy/auth/plugin/callback"
+            }
+        }
+        
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET auth_types = %s,
+                metadata_schema = %s
+            WHERE name = 'Spotify';
+            """,
+            (json.dumps(["oauth2"]), json.dumps(spotify_metadata))
+        )
+        print(f"Spotify update executed. Rows affected: {cur.rowcount}")
+
+        # Commit and close
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("Successfully updated plugin providers.")
+
+    except Exception as e:
+        print(f"Database error: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    setup_oauth()

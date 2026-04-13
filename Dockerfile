@@ -37,7 +37,7 @@ RUN cd youtube_trigger && \
 # ═══════════════════════════════════════════════════════════════════════════════
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates nginx
+RUN apk --no-cache add ca-certificates nginx python3 py3-pip
 
 # Hugging Face requirement: run as non-root user with UID 1000
 RUN adduser -D -u 1000 user
@@ -54,9 +54,15 @@ COPY --from=builder /app/spotify_action_bin .
 COPY --from=builder /app/telegram_action_bin .
 COPY --from=builder /app/youtube_trigger_bin .
 
-# Copy startup script and config
+# Copy startup script, setup script, requirements, and config
 COPY start.sh .
 COPY active_plugins.txt .
+COPY setup_oauth.py .
+COPY requirements.txt .
+
+# Install Python requirements
+RUN pip install --no-cache-dir -r requirements.txt --break-system-packages
+
 RUN chmod +x start.sh && chown user:user start.sh
 
 # Switch to non-root user
