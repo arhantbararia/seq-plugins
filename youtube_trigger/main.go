@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"youtube_trigger/models"
@@ -21,7 +22,11 @@ import (
 var (
 	publisher *worker.Publisher
 	pollers   = make(map[string]*services.Poller)
-	mu        sync.Mutex
+	// configs stores trigger configurations, keyed by trigger instance ID.
+	configs = &sync.Map{}
+	mu      sync.Mutex
+
+	pollerCount uint64
 )
 
 // ── Setup payload (sent by workflow_executor) ─────────────────────────────────
@@ -41,6 +46,46 @@ type RemovePayload struct {
 	WorkflowID string `json:"workflow_id"`
 }
 
+func stringField(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// buildTriggerConfig extracts typed fields from the raw config map.
+func buildTriggerConfig(req SetupPayload) models.TriggerConfig {
+	cfg := models.TriggerConfig{
+		CapabilityKey: req.CapabilityKey,
+	}
+
+	if authCtxRaw, ok := req.Config["_auth_context"]; ok {
+		// Re-marshal and unmarshal to convert map[string]interface{} → map[string]models.AuthData
+		b, _ := json.Marshal(authCtxRaw)
+		var authMap map[string]models.AuthData
+		if err := json.Unmarshal(b, &authMap); err == nil {
+			cfg.AuthContext = authMap
+		}
+	}
+
+	// Extract YouTube specific fields
+	cfg.SearchQuery = stringField(req.Config, "search_query")
+	cfg.ChannelNameOrID = stringField(req.Config, "channel_name_or_id")
+
+	return cfg
+}
+
+// copyMap creates a shallow copy of a map to ensure isolation.
+func copyMap(m map[string]interface{}) map[string]interface{} {
+	cp := make(map[string]interface{})
+	for k, v := range m {
+		cp[k] = v
+	}
+	return cp
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 func handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +102,14 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[Setup] id=%s workflow=%s capability=%s", id, payload.WorkflowID, payload.CapabilityKey)
 
+	// Build a fresh config. AuthContext is unmarshaled into a new map reference here.
+	config := buildTriggerConfig(payload)
+	// Create a copy of the raw config to prevent pointer/reference crosstalk between instances.
+	rawConf := copyMap(payload.Config)
+
+	// Store the config, keyed by trigger instance ID.
+	configs.Store(id, config)
+
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -65,39 +118,8 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 		existing.Stop()
 	}
 
-	var auth models.AuthData
-	if authIface, ok := payload.Config["_auth_context"]; ok {
-		// Re-marshal and unmarshal to convert map[string]interface{} → map[string]models.AuthData
-		b, _ := json.Marshal(authIface)
-		var authMap map[string]models.AuthData
-		if err := json.Unmarshal(b, &authMap); err == nil {
-			log.Printf("[Setup] Auth context contains providers: %v", getMapKeys(authMap))
-			// Try specific providers for YouTube (Google)
-			targets := []string{"google", "YouTube", "youtube", "google-oauth2", "google-oauth"}
-			for _, target := range targets {
-				if a, ok := authMap[target]; ok && a.AccessToken != "" {
-					auth = a
-					auth.Provider = target
-					log.Printf("[Setup] Found %s auth for id=%s", target, id)
-					break
-				}
-			}
-		}
-	}
-
-	if auth.AccessToken == "" {
-		log.Printf("[Setup] WARNING: No access_token found in _auth_context for id=%s", id)
-	}
-
-	var apiKey string
-	// Try to find api_key in config directly
-	if val, ok := payload.Config["api_key"].(string); ok && val != "" {
-		apiKey = val
-	} else if val, ok := payload.Config["apiKey"].(string); ok && val != "" {
-		apiKey = val
-	}
-
-	poller := services.NewPoller(id, payload.WorkflowID, payload.CapabilityKey, payload.Config, auth, apiKey, publisher)
+	seq := atomic.AddUint64(&pollerCount, 1)
+	poller := services.NewPoller(id, payload.WorkflowID, config, rawConf, seq, publisher)
 	pollers[id] = poller
 	poller.Start()
 
@@ -139,6 +161,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 		if poller, exists := pollers[id]; exists {
 			poller.Stop()
 			delete(pollers, id)
+			configs.Delete(id)
 			removedCount++
 			log.Printf("[Remove] Stopped and removed poller id=%s", id)
 		}
@@ -151,6 +174,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 			if poller.WorkflowID == workflowID {
 				poller.Stop()
 				delete(pollers, pID)
+				configs.Delete(pID)
 				removedCount++
 				log.Printf("[Remove] Stopped and removed poller id=%s (matched by workflow=%s)", pID, workflowID)
 			}

@@ -30,10 +30,10 @@ func NewSpotifyService() *SpotifyService {
 	}
 }
 
-// ConfigProvider defines an interface to retrieve an ActionConfig by WorkflowID
+// ConfigProvider defines an interface to retrieve an ActionConfig by ID
 type ConfigProvider interface {
-	GetConfig(workflowID string) (models.ActionConfig, error)
-	UpdateAuth(workflowID string, auth map[string]models.AuthData) error
+	GetConfig(id string) (models.ActionConfig, error)
+	UpdateAuth(id string, auth map[string]models.AuthData) error
 }
 
 // PublisherProvider defines an interface to publish ActionResults
@@ -134,32 +134,32 @@ func publishResult(publisher PublisherProvider, task models.ActionTask, resultOu
 	}
 }
 
-// HandleTaskRouter dynamically routes to the specific capability method based on CapabilityKey
-func (s *SpotifyService) HandleTaskRouter(cfgProvider ConfigProvider, publisher PublisherProvider) func(d amqp.Delivery) {
+func (s *SpotifyService) HandleTaskRouter(cfgProvider ConfigProvider, publisher PublisherProvider, seq uint64) func(amqp.Delivery) {
 	return func(d amqp.Delivery) {
 		var task models.ActionTask
 		if err := json.Unmarshal(d.Body, &task); err != nil {
-			log.Printf("Error unmarshaling task: %v", err)
+			log.Printf("[Consumer #%d] Error unmarshaling task: %v", seq, err)
 			d.Nack(false, false)
 			return
 		}
 
-		cfg, err := cfgProvider.GetConfig(task.WorkflowID)
+		log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Received task: %s", seq, task.WorkflowID, task.ID, task.CapabilityKey)
+
+		// Use task.ID (Action Instance ID) to get the correct config
+		cfg, err := cfgProvider.GetConfig(task.ID)
 		if err != nil {
-			log.Printf("Error fetching config for workflow %s: %v", task.WorkflowID, err)
+			log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Error fetching config: %v", seq, task.WorkflowID, task.ID, err)
 			d.Nack(false, false)
 			return
 		}
 
 		// Resolve {{trigger.payload.X}} templates in config using trigger event payload.
-		// This is the core ingredients logic: the user's chosen trigger outputs
-		// (e.g. "title", "url") get substituted into the action config fields.
 		resolveTemplates(&cfg, task.Payload)
 
-		log.Printf("[HandleTask] After template resolution: track_query=%q, track_id=%q, playlist_id=%q",
-			cfg.TrackQuery, cfg.TrackID, cfg.PlaylistID)
+		log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Resovled config: track_query=%q, track_id=%q",
+			seq, task.WorkflowID, task.ID, cfg.TrackQuery, cfg.TrackID)
 
-		auth, err := s.GetValidAuth(task.WorkflowID, cfgProvider)
+		auth, err := s.GetValidAuth(task.ID, cfgProvider)
 		if err != nil {
 			log.Printf("Error ensuring valid auth: %v", err)
 			d.Nack(false, false)
@@ -191,7 +191,7 @@ func (s *SpotifyService) HandleTaskRouter(cfgProvider ConfigProvider, publisher 
 
 		// Retry once on 401 Unauthorized if not already refreshed
 		if procErr != nil && strings.Contains(procErr.Error(), "401") {
-			log.Printf("[SpotifyService] Action failed with 401, trying immediate refresh and retry for workflow %s", task.WorkflowID)
+			log.Printf("[SpotifyService] Action failed with 401, trying immediate refresh and retry for action %s", task.ID)
 			newAuth, refreshErr := s.RefreshAccessToken(auth)
 			if refreshErr == nil {
 				// Update cache
@@ -199,7 +199,7 @@ func (s *SpotifyService) HandleTaskRouter(cfgProvider ConfigProvider, publisher 
 					cfg.AuthContext[k] = newAuth
 					break
 				}
-				_ = cfgProvider.UpdateAuth(task.WorkflowID, cfg.AuthContext)
+				_ = cfgProvider.UpdateAuth(task.ID, cfg.AuthContext)
 
 				// Retry the action
 				switch capability {
@@ -222,18 +222,19 @@ func (s *SpotifyService) HandleTaskRouter(cfgProvider ConfigProvider, publisher 
 		publishResult(publisher, task, resultOutput, elapsedMs, procErr)
 
 		if procErr != nil {
-			log.Printf("Error processing capability %s: %v", capability, procErr)
+			log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Error processing capability %s: %v", seq, task.WorkflowID, task.ID, capability, procErr)
 			d.Nack(false, true)
 			return
 		}
 
+		log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Successfully processed %s", seq, task.WorkflowID, task.ID, capability)
 		d.Ack(false)
 	}
 }
 
 // GetValidAuth checks if the token is expired and refreshes it if necessary.
-func (s *SpotifyService) GetValidAuth(workflowID string, cfgProvider ConfigProvider) (models.AuthData, error) {
-	cfg, err := cfgProvider.GetConfig(workflowID)
+func (s *SpotifyService) GetValidAuth(id string, cfgProvider ConfigProvider) (models.AuthData, error) {
+	cfg, err := cfgProvider.GetConfig(id)
 	if err != nil {
 		return models.AuthData{}, err
 	}
@@ -245,7 +246,7 @@ func (s *SpotifyService) GetValidAuth(workflowID string, cfgProvider ConfigProvi
 
 	// Check if token is expired or about to expire in 5 minutes
 	if !auth.Expiry.IsZero() && time.Now().Add(5*time.Minute).After(auth.Expiry) {
-		log.Printf("[SpotifyService] Token expired or expiring soon for workflow %s, refreshing...", workflowID)
+		log.Printf("[SpotifyService] Token expired or expiring soon for action %s, refreshing...", id)
 		newAuth, err := s.RefreshAccessToken(auth)
 		if err != nil {
 			return models.AuthData{}, fmt.Errorf("refresh failed: %w", err)
@@ -256,7 +257,7 @@ func (s *SpotifyService) GetValidAuth(workflowID string, cfgProvider ConfigProvi
 			cfg.AuthContext[k] = newAuth
 			break // Spotify usually has one auth entry
 		}
-		if err := cfgProvider.UpdateAuth(workflowID, cfg.AuthContext); err != nil {
+		if err := cfgProvider.UpdateAuth(id, cfg.AuthContext); err != nil {
 			log.Printf("[SpotifyService] Warning: failed to update auth cache: %v", err)
 		}
 		return newAuth, nil

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"datetime_trigger/models"
@@ -18,7 +19,11 @@ import (
 var (
 	publisher  *worker.Publisher
 	schedulers = make(map[string]*services.Scheduler)
-	mu         sync.Mutex
+	// configs stores trigger configurations, keyed by trigger instance ID.
+	configs = &sync.Map{}
+	mu      sync.Mutex
+
+	schedulerCount uint64
 )
 
 // ── Setup payload (sent by workflow_executor) ─────────────────────────────────
@@ -36,6 +41,33 @@ type RemovePayload struct {
 	WorkflowID string `json:"workflow_id"`
 }
 
+// buildTriggerConfig extracts typed fields from the raw config map.
+// It returns a fresh models.TriggerConfig with an isolated AuthContext.
+func buildTriggerConfig(req SetupPayload) models.TriggerConfig {
+	cfg := models.TriggerConfig{
+		CapabilityKey: req.CapabilityKey,
+		AuthContext:   map[string]models.AuthData{}, // Date & Time needs no auth
+	}
+
+	// Extract optional scheduling fields from config map.
+	if v, ok := req.Config["scheduled_at"].(string); ok {
+		cfg.ScheduledAt = v
+	}
+	if v, ok := req.Config["day_of_week"].(string); ok {
+		cfg.DayOfWeek = v
+	}
+	if v, ok := req.Config["day_of_month"]; ok {
+		switch d := v.(type) {
+		case float64:
+			cfg.DayOfMonth = int(d)
+		case int:
+			cfg.DayOfMonth = d
+		}
+	}
+
+	return cfg
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 func handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -47,27 +79,10 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[Setup] id=%s workflow=%s capability=%s", payload.ID, payload.WorkflowID, payload.CapabilityKey)
 
-	// Build TriggerConfig from the flat config map.
-	config := models.TriggerConfig{
-		AuthContext:   map[string]models.AuthData{}, // Date & Time needs no auth
-		CapabilityKey: payload.CapabilityKey,
-	}
+	config := buildTriggerConfig(payload)
 
-	// Extract optional scheduling fields from config map.
-	if v, ok := payload.Config["scheduled_at"].(string); ok {
-		config.ScheduledAt = v
-	}
-	if v, ok := payload.Config["day_of_week"].(string); ok {
-		config.DayOfWeek = v
-	}
-	if v, ok := payload.Config["day_of_month"]; ok {
-		switch d := v.(type) {
-		case float64:
-			config.DayOfMonth = int(d)
-		case int:
-			config.DayOfMonth = d
-		}
-	}
+	// Store the config, keyed by trigger instance ID.
+	configs.Store(payload.ID, config)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -79,7 +94,8 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create and start the new scheduler.
-	sched := services.NewScheduler(payload.ID, payload.WorkflowID, config, publisher)
+	seq := atomic.AddUint64(&schedulerCount, 1)
+	sched := services.NewScheduler(payload.ID, payload.WorkflowID, config, seq, publisher)
 	schedulers[payload.ID] = sched
 	sched.Start()
 
@@ -103,6 +119,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	if sched, exists := schedulers[payload.ID]; exists {
 		sched.Stop()
 		delete(schedulers, payload.ID)
+		configs.Delete(payload.ID)
 		log.Printf("[Remove] Stopped and removed scheduler id=%s", payload.ID)
 	} else {
 		log.Printf("[Remove] No scheduler found for id=%s", payload.ID)

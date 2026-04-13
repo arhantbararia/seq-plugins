@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github_trigger/models"
@@ -19,8 +20,11 @@ import (
 var (
 	publisher *worker.Publisher
 	pollers   = make(map[string]*services.Poller)
-	
-	mu sync.Mutex
+	// configs stores trigger configurations, keyed by trigger instance ID.
+	configs = &sync.Map{}
+	mu      sync.Mutex
+
+	pollerCount uint64
 )
 
 func getMapKeys(m map[string]models.AuthData) []string {
@@ -47,6 +51,38 @@ type RemovePayload struct {
 	WorkflowID string `json:"workflow_id"`
 }
 
+func stringField(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// buildTriggerConfig extracts typed fields from the raw config map.
+// It returns a fresh models.TriggerConfig where AuthContext is an independent map reference.
+func buildTriggerConfig(req SetupPayload) models.TriggerConfig {
+	cfg := models.TriggerConfig{
+		CapabilityKey: req.CapabilityKey,
+	}
+
+	if authCtxRaw, ok := req.Config["_auth_context"]; ok {
+		// Re-marshal and unmarshal to convert map[string]interface{} → map[string]models.AuthData
+		b, _ := json.Marshal(authCtxRaw)
+		var authMap map[string]models.AuthData
+		if err := json.Unmarshal(b, &authMap); err == nil {
+			cfg.AuthContext = authMap
+		}
+	}
+
+	// Extract GitHub specific fields
+	cfg.Repository = stringField(req.Config, "repository")
+	cfg.UsernameOrOrganization = stringField(req.Config, "username_or_organization")
+
+	return cfg
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 func handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +99,11 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[Setup] id=%s workflow=%s capability=%s", id, payload.WorkflowID, payload.CapabilityKey)
 
+	config := buildTriggerConfig(payload)
+
+	// Store the config, keyed by trigger instance ID.
+	configs.Store(id, config)
+
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -71,43 +112,8 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 		existing.Stop()
 	}
 
-	var auth models.AuthData
-	if authIface, ok := payload.Config["_auth_context"]; ok {
-		// Re-marshal and unmarshal to convert map[string]interface{} → map[string]models.AuthData
-		b, _ := json.Marshal(authIface)
-		var authMap map[string]models.AuthData
-		if err := json.Unmarshal(b, &authMap); err == nil {
-			log.Printf("[Setup] Auth context contains providers: %v", getMapKeys(authMap))
-			// Try "github" provider first
-			targets := []string{"github", "github-oauth2"}
-			for _, target := range targets {
-				if a, ok := authMap[target]; ok && a.AccessToken != "" {
-					auth = a
-					auth.Provider = target
-					log.Printf("[Setup] Found %s auth for id=%s", target, id)
-					break
-				}
-			}
-
-			// Fallback: If no specific provider found, take the first one with an access token
-			if auth.AccessToken == "" {
-				for provider, a := range authMap {
-					if a.AccessToken != "" {
-						auth = a
-						auth.Provider = provider
-						log.Printf("[Setup] Fallback: Found access_token from provider %s for id=%s", provider, id)
-						break
-					}
-				}
-			}
-		}
-	}
-
-	if auth.AccessToken == "" {
-		log.Printf("[Setup] WARNING: No access_token found in _auth_context for id=%s", id)
-	}
-
-	poller := services.NewPoller(id, payload.WorkflowID, payload.CapabilityKey, payload.Config, auth, publisher)
+	seq := atomic.AddUint64(&pollerCount, 1)
+	poller := services.NewPoller(id, payload.WorkflowID, config, seq, publisher)
 	pollers[id] = poller
 	poller.Start()
 
@@ -138,6 +144,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 		if poller, exists := pollers[id]; exists {
 			poller.Stop()
 			delete(pollers, id)
+			configs.Delete(id)
 			removedCount++
 			log.Printf("[Remove] Stopped and removed poller id=%s", id)
 		}
@@ -149,6 +156,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 			if poller.WorkflowID == workflowID {
 				poller.Stop()
 				delete(pollers, pID)
+				configs.Delete(pID)
 				removedCount++
 				log.Printf("[Remove] Stopped and removed poller id=%s (matched by workflow=%s)", pID, workflowID)
 			}

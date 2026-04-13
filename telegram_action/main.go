@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"telegram_action/models"
 	"telegram_action/services"
 	"telegram_action/worker"
@@ -17,46 +18,48 @@ import (
 var (
 	// consumers map stores active consumers, keyed by workflow ID.
 	consumers = make(map[string]*worker.Consumer)
-	// configs stores action configurations, keyed by workflow ID.
-	// Using sync.Map for safe concurrent access from HTTP handlers and RabbitMQ handlers.
+	// configs stores action configurations, keyed by action ID.
 	configs = &sync.Map{}
 	// mu protects the consumers map.
 	mu sync.Mutex
+
 	// telegramSvc is the service for interacting with the Telegram API.
 	// This is initialized in main().
 	telegramSvc *services.TelegramService
 	// resultPublisher handles publishing ActionResults to RabbitMQ
 	resultPublisher *worker.Publisher
+
+	consumerCount uint64
 )
 
 // workflowConfigProvider implements the services.ConfigProvider interface,
 // allowing RabbitMQ handlers to retrieve configuration for a workflow.
 type workflowConfigProvider struct{}
 
-// GetConfig retrieves the ActionConfig for a given workflow ID from the global store.
-func (p *workflowConfigProvider) GetConfig(workflowID string) (models.ActionConfig, error) {
-	val, ok := configs.Load(workflowID)
+// GetConfig retrieves the ActionConfig for a given action ID from the global store.
+func (p *workflowConfigProvider) GetConfig(id string) (models.ActionConfig, error) {
+	val, ok := configs.Load(id)
 	if !ok {
-		return models.ActionConfig{}, fmt.Errorf("config not found for workflow %s", workflowID)
+		return models.ActionConfig{}, fmt.Errorf("config not found for action %s", id)
 	}
 	cfg, ok := val.(models.ActionConfig)
 	if !ok {
-		return models.ActionConfig{}, fmt.Errorf("invalid config type in store for workflow %s", workflowID)
+		return models.ActionConfig{}, fmt.Errorf("invalid config type in store for action %s", id)
 	}
 	return cfg, nil
 }
 
-func (p *workflowConfigProvider) UpdateAuth(workflowID string, auth map[string]models.AuthData) error {
-	val, ok := configs.Load(workflowID)
+func (p *workflowConfigProvider) UpdateAuth(id string, auth map[string]models.AuthData) error {
+	val, ok := configs.Load(id)
 	if !ok {
-		return fmt.Errorf("config not found for workflow %s", workflowID)
+		return fmt.Errorf("config not found for action %s", id)
 	}
 	cfg, ok := val.(models.ActionConfig)
 	if !ok {
-		return fmt.Errorf("invalid config type in store for workflow %s", workflowID)
+		return fmt.Errorf("invalid config type in store for action %s", id)
 	}
 	cfg.AuthContext = auth
-	configs.Store(workflowID, cfg)
+	configs.Store(id, cfg)
 	return nil
 }
 
@@ -164,10 +167,9 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	config := buildActionConfig(payload)
 
-	// Store the config, keyed by workflow ID. This is thread-safe.
-	configs.Store(payload.WorkflowID, config)
+	// Store the config, keyed by action ID.
+	configs.Store(payload.ID, config)
 
-	// The rest of the logic modifies the shared consumers map and needs protection.
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -186,39 +188,32 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 	// The handler for the consumer needs a way to get the config.
 	provider := &workflowConfigProvider{}
 
-	// The telegramSvc is a global, assumed to be initialized in main().
-	if telegramSvc == nil {
-		// This is a programmer error, but we can recover by creating an instance.
-		telegramSvc = services.NewTelegramService()
-		log.Println("[Setup] Warning: telegramSvc was not initialized, creating new instance now.")
-	}
+	// Create and start new consumer with a sequence number
+	seq := atomic.AddUint64(&consumerCount, 1)
+	log.Printf("[Setup] Consumer #%d assigned to workflow %s queue %s", seq, payload.WorkflowID, payload.QueueName)
 
+	if telegramSvc == nil {
+		telegramSvc = services.NewTelegramService()
+	}
 	if resultPublisher == nil {
 		resultPublisher = worker.NewPublisher()
-		log.Println("[Setup] Warning: resultPublisher was not initialized, creating new instance now.")
 	}
 
-	taskHandler := telegramSvc.HandleTaskRouter(provider, resultPublisher)
+	taskHandler := telegramSvc.HandleTaskRouter(provider, resultPublisher, seq)
 
-	// Create a new consumer for the specified queue.
 	consumerTag := fmt.Sprintf("telegram-action-%s", payload.WorkflowID)
 	consumer := worker.NewConsumer(rabbitmqURL, payload.QueueName, consumerTag, taskHandler)
-
-	// Start the consumer. It runs in its own goroutine and handles reconnections.
 	consumer.Start()
 
-	// Store the new consumer, replacing the old one.
 	consumers[payload.WorkflowID] = consumer
 
-	log.Printf("[Setup] Started consumer for queue '%s'", payload.QueueName)
-
-	// Respond with success as per the spec.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":    true,
 		"message":    "setup_complete",
 		"queue_name": payload.QueueName,
+		"seq":        seq,
 	})
 }
 
@@ -237,22 +232,17 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Stop and remove the consumer
+	// Stop and remove the consumer keyed by workflowID
 	if consumer, exists := consumers[payload.WorkflowID]; exists {
 		log.Printf("[Remove] Stopping consumer for workflow %s", payload.WorkflowID)
 		consumer.Stop()
 		delete(consumers, payload.WorkflowID)
 		log.Printf("[Remove] Stopped and removed consumer for workflow %s", payload.WorkflowID)
-	} else {
-		log.Printf("[Remove] No consumer found for workflow %s", payload.WorkflowID)
 	}
 
-	// Remove the config
-	configs.Delete(payload.WorkflowID)
-	log.Printf("[Remove] Removed config for workflow %s", payload.WorkflowID)
+	// Remove the specific action config
+	configs.Delete(payload.ID)
+	log.Printf("[Remove] Removed config for action %s", payload.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

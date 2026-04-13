@@ -25,13 +25,14 @@ type Poller struct {
 	TriggerID     string
 	WorkflowID    string
 	CapabilityKey string
-	Config        map[string]interface{}
+	TriggerConfig models.TriggerConfig
 	Token         string
 	RefreshToken  string
 	Expiry        time.Time
 	Provider      string
-	APIKey        string
-	Publisher     *worker.Publisher
+	APIKey         string
+	SequenceNumber uint64
+	Publisher      *worker.Publisher
 	httpClient    *http.Client
 	stopChan      chan struct{}
 	lastCheck     time.Time
@@ -108,28 +109,50 @@ func RefreshOAuth2Token(provider, refreshToken string) (*TokenResponse, error) {
 	return &tokenResp, nil
 }
 
-func NewPoller(triggerID, workflowID, capabilityKey string, config map[string]interface{}, auth models.AuthData, apiKey string, pub *worker.Publisher) *Poller {
+func NewPoller(triggerID, workflowID string, config models.TriggerConfig, rawConfig map[string]interface{}, seq uint64, pub *worker.Publisher) *Poller {
+	// Extract auth
+	var auth models.AuthData
+	targets := []string{"google", "YouTube", "youtube", "google-oauth2", "google-oauth"}
+	for _, target := range targets {
+		if a, ok := config.AuthContext[target]; ok && a.AccessToken != "" {
+			auth = a
+			auth.Provider = target
+			break
+		}
+	}
+
+	// Extract API Key from auth or raw config
+	apiKey := auth.APIKey
+	if apiKey == "" {
+		if val, ok := rawConfig["api_key"].(string); ok && val != "" {
+			apiKey = val
+		} else if val, ok := rawConfig["apiKey"].(string); ok && val != "" {
+			apiKey = val
+		}
+	}
+
 	return &Poller{
-		TriggerID:     triggerID,
-		WorkflowID:    workflowID,
-		CapabilityKey: capabilityKey,
-		Config:        config,
-		Token:         auth.AccessToken,
-		RefreshToken:  auth.RefreshToken,
-		Expiry:        auth.Expiry,
-		Provider:      auth.Provider,
-		APIKey:        apiKey,
-		Publisher:     pub,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
-		stopChan:      make(chan struct{}),
-		lastCheck:     time.Now().UTC(),
-		seenIDs:       make(map[string]bool),
-		isFirstPoll:   true,
+		TriggerID:      triggerID,
+		WorkflowID:     workflowID,
+		CapabilityKey:  config.CapabilityKey,
+		TriggerConfig:  config,
+		Token:          auth.AccessToken,
+		RefreshToken:   auth.RefreshToken,
+		Expiry:         auth.Expiry,
+		Provider:       auth.Provider,
+		APIKey:         apiKey,
+		SequenceNumber: seq,
+		Publisher:      pub,
+		httpClient:     &http.Client{Timeout: 30 * time.Second},
+		stopChan:       make(chan struct{}),
+		lastCheck:      time.Now().UTC(),
+		seenIDs:        make(map[string]bool),
+		isFirstPoll:    true,
 	}
 }
 
 func (p *Poller) Start() {
-	log.Printf("[Poller] Starting trigger=%s workflow=%s capability=%s", p.TriggerID, p.WorkflowID, p.CapabilityKey)
+	log.Printf("[Poller #%d] [Workflow: %s] Starting trigger=%s capability=%s", p.SequenceNumber, p.WorkflowID, p.TriggerID, p.CapabilityKey)
 
 	go func() {
 		ticker := time.NewTicker(2 * time.Minute)
@@ -142,7 +165,7 @@ func (p *Poller) Start() {
 			case <-ticker.C:
 				p.poll()
 			case <-p.stopChan:
-				log.Printf("[Poller] Stopped trigger=%s", p.TriggerID)
+				log.Printf("[Poller #%d] [Workflow: %s] Stopped trigger=%s", p.SequenceNumber, p.WorkflowID, p.TriggerID)
 				return
 			}
 		}
@@ -176,7 +199,7 @@ func (p *Poller) doRequest(method, endpoint string) (map[string]interface{}, err
 			tokenDisplay = "***"
 		}
 	}
-	log.Printf("[Poller] Request: %s %s (Token: %s)", method, endpoint, tokenDisplay)
+	log.Printf("[Poller #%d] [Workflow: %s] Request: %s %s (Token: %s)", p.SequenceNumber, p.WorkflowID, method, endpoint, tokenDisplay)
 
 	token := strings.TrimSpace(p.Token)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -195,7 +218,7 @@ func (p *Poller) doRequest(method, endpoint string) (map[string]interface{}, err
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if p.RefreshToken != "" {
-			log.Printf("[Poller] 401 Unauthorized for trigger=%s. Attempting token refresh...", p.TriggerID)
+			log.Printf("[Poller #%d] [Workflow: %s] 401 Unauthorized for trigger=%s. Attempting token refresh...", p.SequenceNumber, p.WorkflowID, p.TriggerID)
 			newTokens, err := RefreshOAuth2Token(p.Provider, p.RefreshToken)
 			if err != nil {
 				return nil, fmt.Errorf("token refresh failed: %w", err)
@@ -207,7 +230,7 @@ func (p *Poller) doRequest(method, endpoint string) (map[string]interface{}, err
 			p.Expiry = time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
 			p.mu.Unlock()
 
-			log.Printf("[Poller] Token refreshed successfully for trigger=%s. Retrying request...", p.TriggerID)
+			log.Printf("[Poller #%d] [Workflow: %s] Token refreshed successfully for trigger=%s. Retrying request...", p.SequenceNumber, p.WorkflowID, p.TriggerID)
 			// Retry the request once
 			return p.doRequest(method, endpoint)
 		}
@@ -226,7 +249,7 @@ func (p *Poller) doRequest(method, endpoint string) (map[string]interface{}, err
 }
 
 func (p *Poller) poll() {
-	log.Printf("[Poller] Polling YouTube for trigger=%s capability=%s since=%s", p.TriggerID, p.CapabilityKey, p.lastCheck.Format(time.RFC3339))
+	log.Printf("[Poller #%d] [Workflow: %s] Polling YouTube for trigger=%s capability=%s since=%s", p.SequenceNumber, p.WorkflowID, p.TriggerID, p.CapabilityKey, p.lastCheck.Format(time.RFC3339))
 
 	var items []map[string]interface{}
 	var err error
@@ -258,7 +281,7 @@ func (p *Poller) poll() {
 	}
 
 	if err != nil {
-		log.Printf("[Poller] Error polling %s: %v", p.CapabilityKey, err)
+		log.Printf("[Poller #%d] [Workflow: %s] Error polling %s: %v", p.SequenceNumber, p.WorkflowID, p.CapabilityKey, err)
 		return
 	}
 
@@ -282,14 +305,14 @@ func (p *Poller) fireEvent(payload map[string]interface{}) {
 	}
 
 	if err := p.Publisher.Publish(p.WorkflowID, event); err != nil {
-		log.Printf("[Poller] Failed to publish event trigger=%s: %v", p.TriggerID, err)
+		log.Printf("[Poller #%d] [Workflow: %s] Failed to publish event trigger=%s: %v", p.SequenceNumber, p.WorkflowID, p.TriggerID, err)
 	} else {
-		log.Printf("[Poller] Fired event capability=%s trigger=%s", p.CapabilityKey, p.TriggerID)
+		log.Printf("[Poller #%d] [Workflow: %s] Fired event capability=%s trigger=%s", p.SequenceNumber, p.WorkflowID, p.CapabilityKey, p.TriggerID)
 	}
 }
 
 func (p *Poller) pollSearch() ([]map[string]interface{}, error) {
-	query, _ := p.Config["search_query"].(string)
+	query := p.TriggerConfig.SearchQuery
 	endpoint := fmt.Sprintf("%s/search?part=snippet&q=%s&type=video&order=date&publishedAfter=%s",
 		youtubeAPIBase, url.QueryEscape(query), url.QueryEscape(p.lastCheck.Format(time.RFC3339)))
 
@@ -366,7 +389,7 @@ func (p *Poller) pollLikedVideos() ([]map[string]interface{}, error) {
 	}
 
 	if p.isFirstPoll {
-		log.Printf("[Poller] Seeded %d liked video IDs for trigger=%s", len(p.seenIDs), p.TriggerID)
+		log.Printf("[Poller #%d] [Workflow: %s] Seeded %d liked video IDs for trigger=%s", p.SequenceNumber, p.WorkflowID, len(p.seenIDs), p.TriggerID)
 		p.isFirstPoll = false
 	}
 
@@ -405,7 +428,7 @@ func (p *Poller) pollSubscriptions() ([]map[string]interface{}, error) {
 }
 
 func (p *Poller) pollChannelVideos() ([]map[string]interface{}, error) {
-	channelID, _ := p.Config["channel_name_or_id"].(string)
+	channelID := p.TriggerConfig.ChannelNameOrID
 	endpoint := fmt.Sprintf("%s/search?part=snippet&channelId=%s&type=video&order=date&publishedAfter=%s",
 		youtubeAPIBase, url.QueryEscape(channelID), url.QueryEscape(p.lastCheck.Format(time.RFC3339)))
 

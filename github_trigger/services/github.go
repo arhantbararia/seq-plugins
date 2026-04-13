@@ -22,31 +22,55 @@ type Poller struct {
 	TriggerID     string
 	WorkflowID    string
 	CapabilityKey string
-	Config        map[string]interface{}
+	TriggerConfig models.TriggerConfig
 	Token         string
 	RefreshToken  string
 	Expiry        time.Time
-	Provider      string
-	Publisher     *worker.Publisher
+	Provider       string
+	SequenceNumber uint64
+	Publisher      *worker.Publisher
 	httpClient    *http.Client
 	stopChan      chan struct{}
 	lastCheck     time.Time
 }
 
-func NewPoller(triggerID, workflowID, capabilityKey string, config map[string]interface{}, auth models.AuthData, pub *worker.Publisher) *Poller {
+func NewPoller(triggerID, workflowID string, config models.TriggerConfig, seq uint64, pub *worker.Publisher) *Poller {
+	// Extract auth
+	var auth models.AuthData
+	targets := []string{"github", "github-oauth2"}
+	for _, target := range targets {
+		if a, ok := config.AuthContext[target]; ok && a.AccessToken != "" {
+			auth = a
+			auth.Provider = target
+			break
+		}
+	}
+
+	// Fallback: If no specific provider found, take the first one with an access token
+	if auth.AccessToken == "" {
+		for provider, a := range config.AuthContext {
+			if a.AccessToken != "" {
+				auth = a
+				auth.Provider = provider
+				break
+			}
+		}
+	}
+
 	return &Poller{
-		TriggerID:     triggerID,
-		WorkflowID:    workflowID,
-		CapabilityKey: capabilityKey,
-		Config:        config,
-		Token:         auth.AccessToken,
-		RefreshToken:  auth.RefreshToken,
-		Expiry:        auth.Expiry,
-		Provider:      auth.Provider,
-		Publisher:     pub,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
-		stopChan:      make(chan struct{}),
-		lastCheck:     time.Now().UTC(),
+		TriggerID:      triggerID,
+		WorkflowID:     workflowID,
+		CapabilityKey:  config.CapabilityKey,
+		TriggerConfig:  config,
+		Token:          auth.AccessToken,
+		RefreshToken:   auth.RefreshToken,
+		Expiry:         auth.Expiry,
+		Provider:       auth.Provider,
+		SequenceNumber: seq,
+		Publisher:      pub,
+		httpClient:     &http.Client{Timeout: 30 * time.Second},
+		stopChan:       make(chan struct{}),
+		lastCheck:      time.Now().UTC(),
 	}
 }
 
@@ -148,7 +172,7 @@ func (p *Poller) doRequest(method, endpoint string) (interface{}, error) {
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if p.RefreshToken != "" {
-			log.Printf("[Poller] 401 Unauthorized for GitHub trigger=%s. Attempting token refresh...", p.TriggerID)
+			log.Printf("[Poller #%d] [Workflow: %s] 401 Unauthorized for GitHub trigger=%s. Attempting token refresh...", p.SequenceNumber, p.WorkflowID, p.TriggerID)
 			newAccessToken, newRefreshToken, expiresIn, err := RefreshOAuth2Token(p.RefreshToken)
 			if err == nil {
 				p.Token = newAccessToken
@@ -158,10 +182,10 @@ func (p *Poller) doRequest(method, endpoint string) (interface{}, error) {
 				if expiresIn > 0 {
 					p.Expiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
 				}
-				log.Printf("[Poller] Token refreshed successfully for GitHub trigger=%s. Retrying...", p.TriggerID)
+				log.Printf("[Poller #%d] [Workflow: %s] Token refreshed successfully for GitHub trigger=%s. Retrying...", p.SequenceNumber, p.WorkflowID, p.TriggerID)
 				return p.doRequest(method, endpoint)
 			}
-			log.Printf("[Poller] GitHub token refresh failed: %v", err)
+			log.Printf("[Poller #%d] [Workflow: %s] GitHub token refresh failed: %v", p.SequenceNumber, p.WorkflowID, err)
 		}
 	}
 
@@ -178,7 +202,7 @@ func (p *Poller) doRequest(method, endpoint string) (interface{}, error) {
 }
 
 func (p *Poller) poll() {
-	log.Printf("[Poller] Polling GitHub for trigger=%s capability=%s since=%s", p.TriggerID, p.CapabilityKey, p.lastCheck.Format(time.RFC3339))
+	log.Printf("[Poller #%d] [Workflow: %s] Polling GitHub for trigger=%s capability=%s since=%s", p.SequenceNumber, p.WorkflowID, p.TriggerID, p.CapabilityKey, p.lastCheck.Format(time.RFC3339))
 
 	var items []map[string]interface{}
 	var err error
@@ -212,7 +236,7 @@ func (p *Poller) poll() {
 	}
 
 	if err != nil {
-		log.Printf("[Poller] Error polling %s: %v", p.CapabilityKey, err)
+		log.Printf("[Poller #%d] [Workflow: %s] Error polling %s: %v", p.SequenceNumber, p.WorkflowID, p.CapabilityKey, err)
 		return
 	}
 
@@ -236,14 +260,14 @@ func (p *Poller) fireEvent(payload map[string]interface{}) {
 	}
 
 	if err := p.Publisher.Publish(p.WorkflowID, event); err != nil {
-		log.Printf("[Poller] Failed to publish event trigger=%s: %v", p.TriggerID, err)
+		log.Printf("[Poller #%d] [Workflow: %s] Failed to publish event trigger=%s: %v", p.SequenceNumber, p.WorkflowID, p.TriggerID, err)
 	} else {
-		log.Printf("[Poller] Fired event capability=%s trigger=%s", p.CapabilityKey, p.TriggerID)
+		log.Printf("[Poller #%d] [Workflow: %s] Fired event capability=%s trigger=%s", p.SequenceNumber, p.WorkflowID, p.CapabilityKey, p.TriggerID)
 	}
 }
 
 func (p *Poller) pollRepoNotifications() ([]map[string]interface{}, error) {
-	repo, _ := p.Config["repository"].(string)
+	repo := p.TriggerConfig.Repository
 	endpoint := fmt.Sprintf("%s/repos/%s/notifications?since=%s", githubAPIBase, repo, p.lastCheck.Format(time.RFC3339))
 	
 	res, err := p.doRequest("GET", endpoint)
@@ -272,7 +296,7 @@ func (p *Poller) pollRepoNotifications() ([]map[string]interface{}, error) {
 }
 
 func (p *Poller) pollRepoEvents() ([]map[string]interface{}, error) {
-	repo, _ := p.Config["repository"].(string)
+	repo := p.TriggerConfig.Repository
 	endpoint := fmt.Sprintf("%s/repos/%s/events", githubAPIBase, repo)
 	
 	res, err := p.doRequest("GET", endpoint)
@@ -303,7 +327,7 @@ func (p *Poller) pollRepoEvents() ([]map[string]interface{}, error) {
 }
 
 func (p *Poller) pollReleases() ([]map[string]interface{}, error) {
-	repo, _ := p.Config["repository"].(string)
+	repo := p.TriggerConfig.Repository
 	endpoint := fmt.Sprintf("%s/repos/%s/releases", githubAPIBase, repo)
 	
 	res, err := p.doRequest("GET", endpoint)
@@ -334,7 +358,7 @@ func (p *Poller) pollReleases() ([]map[string]interface{}, error) {
 }
 
 func (p *Poller) pollCommits() ([]map[string]interface{}, error) {
-	repo, _ := p.Config["repository"].(string)
+	repo := p.TriggerConfig.Repository
 	endpoint := fmt.Sprintf("%s/repos/%s/commits?since=%s", githubAPIBase, repo, p.lastCheck.Format(time.RFC3339))
 	
 	res, err := p.doRequest("GET", endpoint)
@@ -454,7 +478,7 @@ func (p *Poller) pollIssues(filter string) ([]map[string]interface{}, error) {
 }
 
 func (p *Poller) pollUserRepos() ([]map[string]interface{}, error) {
-	userOrOrg, _ := p.Config["username_or_organization"].(string)
+	userOrOrg := p.TriggerConfig.UsernameOrOrganization
 	// Try users first, then orgs if that fails? Or detect based on type if known.
 	// For now, assume users as primary.
 	endpoint := fmt.Sprintf("%s/users/%s/repos?sort=created&direction=desc", githubAPIBase, userOrOrg)
@@ -493,7 +517,7 @@ func (p *Poller) pollUserRepos() ([]map[string]interface{}, error) {
 }
 
 func (p *Poller) pollPullRequests() ([]map[string]interface{}, error) {
-	repo, _ := p.Config["repository"].(string)
+	repo := p.TriggerConfig.Repository
 	endpoint := fmt.Sprintf("%s/repos/%s/pulls?state=open&sort=created&direction=desc", githubAPIBase, repo)
 	
 	res, err := p.doRequest("GET", endpoint)

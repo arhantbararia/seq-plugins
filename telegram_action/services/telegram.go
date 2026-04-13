@@ -123,15 +123,15 @@ func resolveTemplates(cfg *models.ActionConfig, payload map[string]interface{}) 
 	}
 }
 
-// ConfigProvider defines an interface to retrieve an ActionConfig by WorkflowID
+// ConfigProvider defines an interface to retrieve an ActionConfig by ID
 type ConfigProvider interface {
-	GetConfig(workflowID string) (models.ActionConfig, error)
-	UpdateAuth(workflowID string, auth map[string]models.AuthData) error
+	GetConfig(id string) (models.ActionConfig, error)
+	UpdateAuth(id string, auth map[string]models.AuthData) error
 }
 
 // GetValidAuth placeholder for Telegram (no refresh needed)
-func (s *TelegramService) GetValidAuth(workflowID string, cfgProvider ConfigProvider) (models.AuthData, error) {
-	cfg, err := cfgProvider.GetConfig(workflowID)
+func (s *TelegramService) GetValidAuth(id string, cfgProvider ConfigProvider) (models.AuthData, error) {
+	cfg, err := cfgProvider.GetConfig(id)
 	if err != nil {
 		return models.AuthData{}, err
 	}
@@ -175,26 +175,29 @@ func publishResult(publisher PublisherProvider, task models.ActionTask, resultOu
 // -------------------------------------------------------------------
 
 // HandleTaskRouter dynamically routes to the specific capability method based on CapabilityKey
-func (s *TelegramService) HandleTaskRouter(cfgProvider ConfigProvider, publisher PublisherProvider) func(d amqp.Delivery) {
+func (s *TelegramService) HandleTaskRouter(cfgProvider ConfigProvider, publisher PublisherProvider, seq uint64) func(amqp.Delivery) {
 	return func(d amqp.Delivery) {
 		var task models.ActionTask
 		if err := json.Unmarshal(d.Body, &task); err != nil {
-			log.Printf("Error unmarshaling task: %v", err)
+			log.Printf("[Consumer #%d] Error unmarshaling task: %v", seq, err)
 			d.Nack(false, false)
 			return
 		}
 
-		cfg, err := cfgProvider.GetConfig(task.WorkflowID)
+		log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Received task: %s", seq, task.WorkflowID, task.ID, task.CapabilityKey)
+
+		// Use task.ID (Action Instance ID) to get the correct config
+		cfg, err := cfgProvider.GetConfig(task.ID)
 		if err != nil {
-			log.Printf("Error fetching config for workflow %s: %v", task.WorkflowID, err)
+			log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Error fetching config: %v", seq, task.WorkflowID, task.ID, err)
 			d.Nack(false, false)
 			return
 		}
 
 		resolveTemplates(&cfg, task.Payload)
-		auth, err := s.GetValidAuth(task.WorkflowID, cfgProvider)
+		auth, err := s.GetValidAuth(task.ID, cfgProvider)
 		if err != nil {
-			log.Printf("Error ensuring valid auth: %v", err)
+			log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Error ensuring valid auth: %v", seq, task.WorkflowID, task.ID, err)
 			d.Nack(false, false)
 			return
 		}
@@ -215,7 +218,7 @@ func (s *TelegramService) HandleTaskRouter(cfgProvider ConfigProvider, publisher
 		case "telegram_send_mp3", "telegram_send_mp3_capability":
 			resultOutput, elapsedMs, procErr = s.SendMP3(auth, cfg)
 		default:
-			log.Printf("Unknown capability key: %s", capability)
+			log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Unknown capability key: %s", seq, task.WorkflowID, task.ID, capability)
 			d.Nack(false, false)
 			return
 		}
@@ -223,11 +226,12 @@ func (s *TelegramService) HandleTaskRouter(cfgProvider ConfigProvider, publisher
 		publishResult(publisher, task, resultOutput, elapsedMs, procErr)
 
 		if procErr != nil {
-			log.Printf("Error processing capability %s: %v", capability, procErr)
+			log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Error processing capability %s: %v", seq, task.WorkflowID, task.ID, capability, procErr)
 			d.Nack(false, true)
 			return
 		}
 
+		log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Successfully processed %s", seq, task.WorkflowID, task.ID, capability)
 		d.Ack(false)
 	}
 }
