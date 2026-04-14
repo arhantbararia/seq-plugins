@@ -308,7 +308,7 @@ func (s *GoogleSheetsService) HandleTaskRouter(cfgProvider ConfigProvider, publi
 
 func (s *GoogleSheetsService) doRequest(method, endpoint string, auth models.AuthData, body []byte) (map[string]interface{}, int64, error) {
 	start := time.Now()
-	
+
 	req, err := http.NewRequest(method, endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		elapsed := time.Since(start).Milliseconds()
@@ -368,9 +368,9 @@ func (s *GoogleSheetsService) UpdateCell(auth models.AuthData, cfg models.Action
 		rangeStr = fmt.Sprintf("'%s'!%s", cfg.Worksheet, cfg.CellCoordinates)
 	}
 
-	endpoint := fmt.Sprintf("%s/%s/values/%s?valueInputOption=USER_ENTERED", 
-		googleSheetsAPIBase, 
-		url.PathEscape(cfg.SpreadsheetID), 
+	endpoint := fmt.Sprintf("%s/%s/values/%s?valueInputOption=USER_ENTERED",
+		googleSheetsAPIBase,
+		url.PathEscape(cfg.SpreadsheetID),
 		url.PathEscape(rangeStr),
 	)
 
@@ -396,9 +396,9 @@ func (s *GoogleSheetsService) AddRow(auth models.AuthData, cfg models.ActionConf
 		rangeStr = fmt.Sprintf("'%s'!%s", cfg.Worksheet, rangeStr)
 	}
 
-	endpoint := fmt.Sprintf("%s/%s/values/%s:append?valueInputOption=USER_ENTERED", 
-		googleSheetsAPIBase, 
-		url.PathEscape(cfg.SpreadsheetID), 
+	endpoint := fmt.Sprintf("%s/%s/values/%s:append?valueInputOption=USER_ENTERED",
+		googleSheetsAPIBase,
+		url.PathEscape(cfg.SpreadsheetID),
 		url.PathEscape(rangeStr),
 	)
 

@@ -44,6 +44,7 @@ func (s *RegistrationService) Register() error {
 		pluginID = pluginID + "-telegram-action"
 	}
 
+	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "Telegram Action",
@@ -52,9 +53,9 @@ func (s *RegistrationService) Register() error {
 		PluginHost:            host,
 		PluginPort:            port,
 		Endpoints: map[string]string{
-			"setup":  "/telegram/setup",
-			"remove": "/telegram/remove",
-			"health": "/telegram/health",
+			"setup":  prefix + "/setup",
+			"remove": prefix + "/remove",
+			"health": prefix + "/health",
 		},
 		AuthTypes: []string{"BOT_TOKEN"},
 		Capabilities: []models.PluginCapability{

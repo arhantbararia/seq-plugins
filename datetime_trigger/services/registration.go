@@ -44,6 +44,7 @@ func (s *RegistrationService) Register() error {
 		pluginID = pluginID + "-datetime-trigger"
 	}
 
+	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "Date & Time Trigger",
@@ -52,9 +53,9 @@ func (s *RegistrationService) Register() error {
 		PluginHost:            host,
 		PluginPort:            port,
 		Endpoints: map[string]string{
-			"setup":  "/datetime/setup",
-			"remove": "/datetime/remove",
-			"health": "/datetime/health",
+			"setup":  prefix + "/setup",
+			"remove": prefix + "/remove",
+			"health": prefix + "/health",
 		},
 		AuthTypes:             []string{"None"},
 		Capabilities: []models.PluginCapability{

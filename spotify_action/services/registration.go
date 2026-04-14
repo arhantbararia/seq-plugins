@@ -42,6 +42,7 @@ func (s *RegistrationService) Register() error {
 		pluginID = pluginID + "-spotify-action"
 	}
 
+	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "Spotify Action",
@@ -50,9 +51,9 @@ func (s *RegistrationService) Register() error {
 		PluginHost:            host,
 		PluginPort:            port,
 		Endpoints: map[string]string{
-			"setup":  "/spotify/setup",
-			"remove": "/spotify/remove",
-			"health": "/spotify/health",
+			"setup":  prefix + "/setup",
+			"remove": prefix + "/remove",
+			"health": prefix + "/health",
 		},
 		AuthTypes: []string{"OAUTH2"},
 		Capabilities: []models.PluginCapability{

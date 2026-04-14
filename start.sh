@@ -16,17 +16,20 @@ if [ -f active_plugins.txt ]; then
         # Skip empty lines or comments
         [ -z "$line" ] || [ "$(echo "$line" | cut -c1)" = "#" ] && continue
         
-        # Derive binary name and prefix
-        # active_plugins.txt names: datetime_trigger, telegram_action, etc.
+        # Derive binary name and route prefix components
         BINARY="${line}_bin"
-        PREFIX=$(echo "$line" | sed -E 's/_(trigger|action)//')
+        PROVIDER=$(echo "$line" | sed -E 's/_(trigger|action)//')
+        TYPE=$(echo "$line" | grep -oE '(trigger|action)' || echo "plugin")
         
-        PLUGINS="$PLUGINS ${BINARY}:${PREFIX}"
+        # New 2-level prefix: /youtube/trigger or /spotify/action
+        ROUTE_PREFIX="/${PROVIDER}/${TYPE}"
+        
+        PLUGINS="$PLUGINS ${BINARY}:${ROUTE_PREFIX}"
     done < active_plugins.txt
     PLUGINS=$(echo $PLUGINS | xargs) # trim
 else
     # Fallback to hardcoded list if file is missing
-    PLUGINS="datetime_trigger_bin:datetime telegram_action_bin:telegram youtube_trigger_bin:youtube spotify_action_bin:spotify"
+    PLUGINS="datetime_trigger_bin:/datetime/trigger telegram_action_bin:/telegram/action youtube_trigger_bin:/youtube/trigger spotify_action_bin:/spotify/action"
 fi
 
 # ── Generate nginx.conf ──────────────────────────────────────────────────────
@@ -58,12 +61,13 @@ NGINX_HEADER
 PORT=$BASE_PORT
 for ENTRY in $PLUGINS; do
     BINARY=$(echo "$ENTRY" | cut -d: -f1)
-    PREFIX=$(echo "$ENTRY" | cut -d: -f2)
+    # The second part is now the full prefix like /youtube/trigger
+    ROUTE_PREFIX=$(echo "$ENTRY" | cut -d: -f2)
 
     cat >> /etc/nginx/nginx.conf <<NGINX_LOCATION
-        # Route for ${PREFIX}
-        location /${PREFIX}/ {
-            proxy_pass http://127.0.0.1:${PORT}/;
+        # Route for ${BINARY} -> ${ROUTE_PREFIX}
+        location ${ROUTE_PREFIX}/ {
+            proxy_pass http://127.0.0.1:${PORT}; # No trailing slash preserves the full path
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -72,8 +76,8 @@ for ENTRY in $PLUGINS; do
             proxy_connect_timeout 10s;
         }
 
-        # Redirect /${PREFIX} to /${PREFIX}/
-        location = /${PREFIX} {
+        # Redirect ${ROUTE_PREFIX} to ${ROUTE_PREFIX}/
+        location = ${ROUTE_PREFIX} {
             return 301 \$scheme://\$host\$request_uri/;
         }
 
@@ -97,7 +101,11 @@ for ENTRY in $PLUGINS; do
     PREFIX=$(echo "$ENTRY" | cut -d: -f2)
 
     echo "Starting ${BINARY} on port ${PORT} (route: /${PREFIX}/)..."
-    PLUGIN_LISTEN_PORT=$PORT /app/${BINARY} &
+    BINARY=$(echo "$ENTRY" | cut -d: -f1)
+    ROUTE_PREFIX=$(echo "$ENTRY" | cut -d: -f2)
+    
+    echo "Starting plugin ${BINARY} with prefix ${ROUTE_PREFIX} on internal port ${PORT}..."
+    PLUGIN_LISTEN_PORT=$PORT PLUGIN_ROUTE_PREFIX=$ROUTE_PREFIX /app/${BINARY} &
 
     PORT=$((PORT + 1))
 done

@@ -41,6 +41,7 @@ func (s *RegistrationService) Register() error {
 		pluginID = pluginID + "-youtube-trigger"
 	}
 
+	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "YouTube Trigger",
@@ -49,9 +50,9 @@ func (s *RegistrationService) Register() error {
 		PluginHost:            host,
 		PluginPort:            port,
 		Endpoints: map[string]string{
-			"setup":  "/youtube/setup",
-			"remove": "/youtube/remove",
-			"health": "/youtube/health",
+			"setup":  prefix + "/setup",
+			"remove": prefix + "/remove",
+			"health": prefix + "/health",
 		},
 		AuthTypes:             []string{"OAuth 2.0"},
 		Capabilities: []models.PluginCapability{

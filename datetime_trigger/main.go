@@ -204,10 +204,11 @@ func main() {
 	}()
 
 	// HTTP routes.
-	http.HandleFunc("/setup", handleSetup)
-	http.HandleFunc("/remove", handleRemove)
-	http.HandleFunc("/validate", handleValidate)
-	http.HandleFunc("/health", handleHealth)
+	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
+	http.HandleFunc(prefix+"/setup", handleSetup)
+	http.HandleFunc(prefix+"/remove", handleRemove)
+	http.HandleFunc(prefix+"/validate", handleValidate)
+	http.HandleFunc(prefix+"/health", handleHealth)
 
 	// PLUGIN_LISTEN_PORT is the internal port for Nginx proxying (set by start.sh).
 	// Falls back to PLUGIN_PORT for standalone/local deployments.
