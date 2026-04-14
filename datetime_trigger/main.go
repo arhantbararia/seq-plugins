@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -120,7 +121,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 		sched.Stop()
 		delete(schedulers, payload.ID)
 		configs.Delete(payload.ID)
-		log.Printf("[Remove] Stopped and removed scheduler id=%s", payload.ID)
+		log.Printf("[Remove] Stopped and removed scheduler for id=%s", payload.ID)
 	} else {
 		log.Printf("[Remove] No scheduler found for id=%s", payload.ID)
 	}
@@ -128,6 +129,39 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"removed"}`))
+}
+
+func handleValidate(w http.ResponseWriter, r *http.Request) {
+	var payload SetupPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("[Validate] Error: invalid JSON: %v", err)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	config := buildTriggerConfig(payload)
+	
+	// Check if this ID already exists and has identical config
+	val, ok := configs.Load(payload.ID)
+	isDuplicate := false
+	if ok {
+		existingConfig := val.(models.TriggerConfig)
+		// Compare key parts of the config
+		if reflect.DeepEqual(existingConfig.AuthContext, config.AuthContext) &&
+		   existingConfig.CapabilityKey == config.CapabilityKey &&
+		   existingConfig.ScheduledAt == config.ScheduledAt &&
+		   existingConfig.DayOfWeek == config.DayOfWeek &&
+		   existingConfig.DayOfMonth == config.DayOfMonth {
+			isDuplicate = true
+			log.Printf("[Validate] Duplicate detected for id=%s", payload.ID)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_duplicate": isDuplicate,
+	})
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +206,7 @@ func main() {
 	// HTTP routes.
 	http.HandleFunc("/setup", handleSetup)
 	http.HandleFunc("/remove", handleRemove)
+	http.HandleFunc("/validate", handleValidate)
 	http.HandleFunc("/health", handleHealth)
 
 	// PLUGIN_LISTEN_PORT is the internal port for Nginx proxying (set by start.sh).

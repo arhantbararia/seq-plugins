@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -190,6 +191,42 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"removed","removed_count":` + fmt.Sprintf("%d", removedCount) + `}`))
 }
 
+func handleValidate(w http.ResponseWriter, r *http.Request) {
+	var payload SetupPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("[Validate] Error: invalid JSON: %v", err)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	id := payload.ID
+	if id == "" {
+		id = payload.TriggerID
+	}
+
+	config := buildTriggerConfig(payload)
+	
+	val, ok := configs.Load(id)
+	isDuplicate := false
+	if ok {
+		existingConfig := val.(models.TriggerConfig)
+		// Compare key parts of the config
+		if reflect.DeepEqual(existingConfig.AuthContext, config.AuthContext) &&
+		   existingConfig.CapabilityKey == config.CapabilityKey &&
+		   existingConfig.SearchQuery == config.SearchQuery &&
+		   existingConfig.ChannelNameOrID == config.ChannelNameOrID {
+			isDuplicate = true
+			log.Printf("[Validate] Duplicate detected for id=%s", id)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_duplicate": isDuplicate,
+	})
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	active := len(pollers)
@@ -232,6 +269,7 @@ func main() {
 	// HTTP routes.
 	http.HandleFunc("/setup", handleSetup)
 	http.HandleFunc("/remove", handleRemove)
+	http.HandleFunc("/validate", handleValidate)
 	http.HandleFunc("/health", handleHealth)
 
 	// PLUGIN_LISTEN_PORT is the internal port for Nginx proxying (set by start.sh).

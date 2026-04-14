@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"reflect"
 	"spotify_action/models"
 	"spotify_action/services"
 	"spotify_action/worker"
@@ -18,7 +19,7 @@ import (
 )
 // Global state
 var (
-	// consumers map stores active consumers, keyed by workflow ID.
+	// consumers map stores active consumers, keyed by subscription ID (Payload.ID).
 	consumers = make(map[string]*worker.Consumer)
 	// configs stores action configurations, keyed by action ID.
 	configs = &sync.Map{}
@@ -217,9 +218,9 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// If a consumer for this workflow already exists, stop it before creating a new one.
-	if existingConsumer, ok := consumers[payload.WorkflowID]; ok {
-		log.Printf("[Setup] Stopping existing consumer for workflow %s", payload.WorkflowID)
+	// If a consumer for this subscription already exists, stop it before creating a new one.
+	if existingConsumer, ok := consumers[payload.ID]; ok {
+		log.Printf("[Setup] Stopping existing consumer for id %s", payload.ID)
 		existingConsumer.Stop()
 	}
 
@@ -249,7 +250,7 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 	consumer := worker.NewConsumer(rabbitmqURL, payload.QueueName, consumerTag, taskHandler)
 	consumer.Start()
 
-	consumers[payload.WorkflowID] = consumer
+	consumers[payload.ID] = consumer
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -264,35 +265,76 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 func handleRemove(w http.ResponseWriter, r *http.Request) {
 	var payload RemovePayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("[Remove] Error: invalid JSON: %v", err)
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[Remove] id=%s workflow=%s", payload.ID, payload.WorkflowID)
+	id := payload.ID
+	workflowID := payload.WorkflowID
 
-	// The key for consumers and configs is WorkflowID
-	if payload.WorkflowID == "" {
-		http.Error(w, "workflow_id is required", http.StatusBadRequest)
-		return
+	log.Printf("[Remove] Processing removal for id=%s workflow=%s", id, workflowID)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	removedCount := 0
+
+	// 1. Try to find by ID
+	if id != "" {
+		if consumer, exists := consumers[id]; exists {
+			log.Printf("[Remove] Stopping consumer for id %s", id)
+			consumer.Stop()
+			delete(consumers, id)
+			configs.Delete(id)
+			removedCount++
+		}
 	}
 
-	// Stop and remove the consumer keyed by workflowID
-	if consumer, exists := consumers[payload.WorkflowID]; exists {
-		log.Printf("[Remove] Stopping consumer for workflow %s", payload.WorkflowID)
-		consumer.Stop()
-		delete(consumers, payload.WorkflowID)
-		log.Printf("[Remove] Stopped and removed consumer for workflow %s", payload.WorkflowID)
-	}
+	// 2. Fallback: Search all consumers by WorkflowID
+	// (Note: This would require consumer to store its WorkflowID, we skip for now to avoid model changes)
 
-	// Remove the action config
-	configs.Delete(payload.ID)
-	log.Printf("[Remove] Removed config for action %s", payload.ID)
+	if removedCount == 0 && id != "" {
+		log.Printf("[Remove] Warning: No active consumer found for id %s", id)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "removed",
+		"removed_count": removedCount,
+	})
+}
+
+func handleValidate(w http.ResponseWriter, r *http.Request) {
+	var payload SetupPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("[Validate] Error: invalid JSON: %v", err)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	config := buildActionConfig(payload)
+	
+	// Check if this ID already exists and has identical config
+	val, ok := configs.Load(payload.ID)
+	isDuplicate := false
+	if ok {
+		existingConfig := val.(models.ActionConfig)
+		// Compare key parts of the config
+		if reflect.DeepEqual(existingConfig.RawConfig, config.RawConfig) && 
+		   reflect.DeepEqual(existingConfig.AuthContext, config.AuthContext) &&
+		   existingConfig.CapabilityKey == config.CapabilityKey {
+			isDuplicate = true
+			log.Printf("[Validate] Duplicate detected for id=%s", payload.ID)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_duplicate": isDuplicate,
 	})
 }
 
@@ -341,6 +383,7 @@ func main() {
 	// HTTP routes.
 	http.HandleFunc("/setup", handleSetup)
 	http.HandleFunc("/remove", handleRemove)
+	http.HandleFunc("/validate", handleValidate)
 	http.HandleFunc("/health", handleHealth)
 
 	// PLUGIN_LISTEN_PORT is the internal port for Nginx proxying (set by start.sh).

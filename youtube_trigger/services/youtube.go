@@ -285,11 +285,47 @@ func (p *Poller) poll() {
 		return
 	}
 
-	newCheckTime := time.Now().UTC()
-	for _, item := range items {
-		p.fireEvent(item)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	currentBatchIDs := make(map[string]bool)
+	newItemsCount := 0
+
+	for i, item := range items {
+		id, _ := item["_id"].(string)
+		if id == "" {
+			continue
+		}
+		currentBatchIDs[id] = true
+
+		// If this is the first poll, we trigger ONLY for the latest (first) item
+		// to provide immediate feedback, then seed the rest to avoid a flood.
+		if p.isFirstPoll {
+			if i == 0 {
+				p.fireEvent(item)
+				newItemsCount++
+			}
+			continue
+		}
+
+		// If the ID was not in the *previous* poll's batch, it's new
+		if !p.seenIDs[id] {
+			p.fireEvent(item)
+			newItemsCount++
+		}
 	}
-	p.lastCheck = newCheckTime
+
+	// Update the RAM-efficient tracker to only contain this latest batch
+	p.seenIDs = currentBatchIDs
+
+	if p.isFirstPoll {
+		log.Printf("[Poller #%d] [Workflow: %s] Seeded %d initial items for trigger=%s", p.SequenceNumber, p.WorkflowID, len(p.seenIDs), p.TriggerID)
+		p.isFirstPoll = false
+	} else if newItemsCount > 0 {
+		log.Printf("[Poller #%d] [Workflow: %s] Detected %d new items for trigger=%s", p.SequenceNumber, p.WorkflowID, newItemsCount, p.TriggerID)
+	}
+
+	p.lastCheck = time.Now().UTC()
 }
 
 func (p *Poller) fireEvent(payload map[string]interface{}) {
@@ -333,6 +369,7 @@ func (p *Poller) pollSearch() ([]map[string]interface{}, error) {
 		videoID, _ := id["videoId"].(string)
 
 		results = append(results, map[string]interface{}{
+			"_id":          videoID,
 			"title":        snippet["title"],
 			"description":  snippet["description"],
 			"url":          "https://www.youtube.com/watch?v=" + videoID,
@@ -354,9 +391,6 @@ func (p *Poller) pollLikedVideos() ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 	items, _ := resp["items"].([]interface{})
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	for _, item := range items {
 		v, ok := item.(map[string]interface{})
 		if !ok {
@@ -367,30 +401,15 @@ func (p *Poller) pollLikedVideos() ([]map[string]interface{}, error) {
 			continue
 		}
 
-		// If this is the first poll, we just seed the seenIDs map without firing events
-		if p.isFirstPoll {
-			p.seenIDs[videoID] = true
-			continue
-		}
-
-		// If we haven't seen this video ID before, it's a new like
-		if !p.seenIDs[videoID] {
-			snippet, _ := v["snippet"].(map[string]interface{})
-			p.seenIDs[videoID] = true
-
-			results = append(results, map[string]interface{}{
-				"title":       snippet["title"],
-				"description": snippet["description"],
-				"url":         "https://www.youtube.com/watch?v=" + videoID,
-				"author_name": snippet["channelTitle"],
-				"liked_at":    time.Now().UTC().Format(time.RFC3339), // Approximate since videos.list lacks liked-at
-			})
-		}
-	}
-
-	if p.isFirstPoll {
-		log.Printf("[Poller #%d] [Workflow: %s] Seeded %d liked video IDs for trigger=%s", p.SequenceNumber, p.WorkflowID, len(p.seenIDs), p.TriggerID)
-		p.isFirstPoll = false
+		snippet, _ := v["snippet"].(map[string]interface{})
+		results = append(results, map[string]interface{}{
+			"_id":         videoID,
+			"title":       snippet["title"],
+			"description": snippet["description"],
+			"url":         "https://www.youtube.com/watch?v=" + videoID,
+			"author_name": snippet["channelTitle"],
+			"liked_at":    time.Now().UTC().Format(time.RFC3339),
+		})
 	}
 
 	return results, nil
@@ -418,6 +437,7 @@ func (p *Poller) pollSubscriptions() ([]map[string]interface{}, error) {
 			resID, _ := snippet["resourceId"].(map[string]interface{})
 			channelID, _ := resID["channelId"].(string)
 			results = append(results, map[string]interface{}{
+				"_id":          channelID,
 				"channel_name": snippet["title"],
 				"channel_url":  "https://www.youtube.com/channel/" + channelID,
 				"description":  snippet["description"],
@@ -449,6 +469,7 @@ func (p *Poller) pollChannelVideos() ([]map[string]interface{}, error) {
 		videoID, _ := id["videoId"].(string)
 
 		results = append(results, map[string]interface{}{
+			"_id":          videoID,
 			"title":        snippet["title"],
 			"description":  snippet["description"],
 			"url":          "https://www.youtube.com/watch?v=" + videoID,
@@ -478,10 +499,12 @@ func (p *Poller) pollPlaylists() ([]map[string]interface{}, error) {
 		t, _ := time.Parse(time.RFC3339, publishedAt)
 
 		if t.After(p.lastCheck) {
+			playlistID, _ := v["id"].(string)
 			results = append(results, map[string]interface{}{
+				"_id":          playlistID,
 				"title":        snippet["title"],
 				"description":  snippet["description"],
-				"url":          "https://www.youtube.com/playlist?list=" + v["id"].(string),
+				"url":          "https://www.youtube.com/playlist?list=" + playlistID,
 				"published_at": publishedAt,
 			})
 		}
@@ -517,6 +540,7 @@ func (p *Poller) pollMyUploads() ([]map[string]interface{}, error) {
 			videoID, _ := upload["videoId"].(string)
 
 			results = append(results, map[string]interface{}{
+				"_id":          videoID,
 				"title":        snippet["title"],
 				"description":  snippet["description"],
 				"url":          "https://www.youtube.com/watch?v=" + videoID,
@@ -556,6 +580,7 @@ func (p *Poller) pollSubscriptionActivities() ([]map[string]interface{}, error) 
 			videoID, _ := upload["videoId"].(string)
 
 			results = append(results, map[string]interface{}{
+				"_id":          videoID,
 				"title":        snippet["title"],
 				"description":  snippet["description"],
 				"url":          "https://www.youtube.com/watch?v=" + videoID,
@@ -586,7 +611,9 @@ func (p *Poller) pollSuperChat() ([]map[string]interface{}, error) {
 		t, _ := time.Parse(time.RFC3339, createdAt)
 
 		if t.After(p.lastCheck) {
+			id, _ := v["id"].(string)
 			results = append(results, map[string]interface{}{
+				"_id":          id,
 				"message":      snippet["commentText"],
 				"author_name":  snippet["supporterDetails"].(map[string]interface{})["displayName"],
 				"amount":       fmt.Sprintf("%v", snippet["amountMicros"].(float64)/1000000),
@@ -618,8 +645,10 @@ func (p *Poller) pollMemberships() ([]map[string]interface{}, error) {
 		t, _ := time.Parse(time.RFC3339, joinedAt)
 
 		if t.After(p.lastCheck) {
+			id, _ := v["id"].(string)
 			details, _ := snippet["memberDetails"].(map[string]interface{})
 			results = append(results, map[string]interface{}{
+				"_id":         id,
 				"member_name": details["displayName"],
 				"level":       snippet["membershipsDetails"].(map[string]interface{})["highestAccessibleLevel"],
 				"joined_at":   joinedAt,
@@ -653,8 +682,10 @@ func (p *Poller) pollSuperStickers() ([]map[string]interface{}, error) {
 		t, _ := time.Parse(time.RFC3339, createdAt)
 
 		if t.After(p.lastCheck) {
+			id, _ := v["id"].(string)
 			sticker, _ := snippet["superStickerMetadata"].(map[string]interface{})
 			results = append(results, map[string]interface{}{
+				"_id":          id,
 				"sticker_url":  sticker["stickerId"], // Simplified
 				"author_name":  snippet["supporterDetails"].(map[string]interface{})["displayName"],
 				"amount":       fmt.Sprintf("%v", snippet["amountMicros"].(float64)/1000000),
