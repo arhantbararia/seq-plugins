@@ -6,11 +6,6 @@
 
 set -e
 
-# ── Dynamic OAuth Setup ──────────────────────────────────────────────────────
-echo "Waiting 15 seconds before running database setup..."
-sleep 15
-python3 setup_oauth.py
-
 BASE_PORT=8081
 
 # ── Plugin Registry (Automated) ──────────────────────────────────────────────
@@ -107,8 +102,11 @@ for ENTRY in $PLUGINS; do
     PORT=$((PORT + 1))
 done
 
-# ── Give binaries a moment to bind their ports ───────────────────────────────
-sleep 2
+# ── Dynamic OAuth Setup ──────────────────────────────────────────────────────
+# Run after binaries have started to ensure they are ready for configuration
+echo "Waiting 15 seconds for plugin binaries to stabilize before running database setup..."
+sleep 15
+python3 setup_oauth.py
 
 # ── Start Nginx in the foreground ────────────────────────────────────────────
 echo "Starting Nginx on port 7860..."
