@@ -56,26 +56,44 @@ func stringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
+// extractAuthContext pulls "_auth_context" from a raw config map.
+func extractAuthContext(raw map[string]interface{}) map[string]models.AuthData {
+	v, ok := raw["_auth_context"]
+	if !ok {
+		return nil
+	}
+	// Re-marshal and unmarshal to convert map[string]interface{} → map[string]models.AuthData
+	b, _ := json.Marshal(v)
+	var result map[string]models.AuthData
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil
+	}
+	return result
+}
+
 // buildTriggerConfig extracts typed fields from the raw config map.
 func buildTriggerConfig(req SetupPayload) models.TriggerConfig {
-	cfg := models.TriggerConfig{
+	return models.TriggerConfig{
 		CapabilityKey: req.CapabilityKey,
+		AuthContext:   extractAuthContext(req.Config),
+		SearchQuery:   stringField(req.Config, "q"),
+		ChannelNameOrID: stringField(req.Config, "channel"),
 	}
+}
 
-	if authCtxRaw, ok := req.Config["_auth_context"]; ok {
-		// Re-marshal and unmarshal to convert map[string]interface{} → map[string]models.AuthData
-		b, _ := json.Marshal(authCtxRaw)
-		var authMap map[string]models.AuthData
-		if err := json.Unmarshal(b, &authMap); err == nil {
-			cfg.AuthContext = authMap
-		}
+// pollerConfigUpdater implements services.ConfigUpdater to allow pollers to persist refreshed tokens.
+type pollerConfigUpdater struct{}
+
+func (u *pollerConfigUpdater) UpdateAuth(id string, auth map[string]models.AuthData) error {
+	val, ok := configs.Load(id)
+	if !ok {
+		return fmt.Errorf("config not found for trigger %s", id)
 	}
-
-	// Extract YouTube specific fields
-	cfg.SearchQuery = stringField(req.Config, "search_query")
-	cfg.ChannelNameOrID = stringField(req.Config, "channel_name_or_id")
-
-	return cfg
+	cfg := val.(models.TriggerConfig)
+	cfg.AuthContext = auth
+	configs.Store(id, cfg)
+	log.Printf("[Updater] Persisted refreshed tokens for trigger %s", id)
+	return nil
 }
 
 // copyMap creates a shallow copy of a map to ensure isolation.
@@ -120,7 +138,8 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	seq := atomic.AddUint64(&pollerCount, 1)
-	poller := services.NewPoller(id, payload.WorkflowID, config, rawConf, seq, publisher)
+	updater := &pollerConfigUpdater{}
+	poller := services.NewPoller(id, payload.WorkflowID, config, rawConf, seq, publisher, updater)
 	pollers[id] = poller
 	poller.Start()
 

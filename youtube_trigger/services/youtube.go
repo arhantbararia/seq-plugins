@@ -18,6 +18,11 @@ import (
 
 	"github.com/google/uuid"
 )
+ 
+ // ConfigUpdater defines an interface to persist updated configuration context.
+ type ConfigUpdater interface {
+ 	UpdateAuth(id string, auth map[string]models.AuthData) error
+ }
 
 const youtubeAPIBase = "https://www.googleapis.com/youtube/v3"
 
@@ -39,6 +44,7 @@ type Poller struct {
 	mu            sync.Mutex
 	seenIDs       map[string]bool
 	isFirstPoll   bool
+	Updater       ConfigUpdater
 }
 
 type TokenResponse struct {
@@ -109,7 +115,7 @@ func RefreshOAuth2Token(provider, refreshToken string) (*TokenResponse, error) {
 	return &tokenResp, nil
 }
 
-func NewPoller(triggerID, workflowID string, config models.TriggerConfig, rawConfig map[string]interface{}, seq uint64, pub *worker.Publisher) *Poller {
+func NewPoller(triggerID, workflowID string, config models.TriggerConfig, rawConfig map[string]interface{}, seq uint64, pub *worker.Publisher, updater ConfigUpdater) *Poller {
 	// Extract auth
 	var auth models.AuthData
 	targets := []string{"google", "YouTube", "youtube", "google-oauth2", "google-oauth"}
@@ -148,6 +154,7 @@ func NewPoller(triggerID, workflowID string, config models.TriggerConfig, rawCon
 		lastCheck:      time.Now().UTC(),
 		seenIDs:        make(map[string]bool),
 		isFirstPoll:    true,
+		Updater:       updater,
 	}
 }
 
@@ -228,6 +235,20 @@ func (p *Poller) doRequest(method, endpoint string) (map[string]interface{}, err
 			p.Token = newTokens.AccessToken
 			p.RefreshToken = newTokens.RefreshToken
 			p.Expiry = time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
+
+			// Update the stored configuration context if an updater is provided
+			if p.Updater != nil && p.Provider != "" {
+				if p.TriggerConfig.AuthContext == nil {
+					p.TriggerConfig.AuthContext = make(map[string]models.AuthData)
+				}
+				p.TriggerConfig.AuthContext[p.Provider] = models.AuthData{
+					AccessToken:  p.Token,
+					RefreshToken: p.RefreshToken,
+					Expiry:       p.Expiry,
+					Provider:     p.Provider,
+				}
+				_ = p.Updater.UpdateAuth(p.TriggerID, p.TriggerConfig.AuthContext)
+			}
 			p.mu.Unlock()
 
 			log.Printf("[Poller #%d] [Workflow: %s] Token refreshed successfully for trigger=%s. Retrying request...", p.SequenceNumber, p.WorkflowID, p.TriggerID)

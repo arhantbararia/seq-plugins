@@ -245,7 +245,7 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 		resultPublisher = worker.NewPublisher()
 	}
 
-	taskHandler := spotifySvc.HandleTaskRouter(provider, resultPublisher, seq)
+	taskHandler := spotifySvc.HandleTaskRouter(provider, resultPublisher, seq, payload.ID, config)
 
 	consumerTag := fmt.Sprintf("spotify-action-%s", payload.WorkflowID)
 	consumer := worker.NewConsumer(rabbitmqURL, payload.QueueName, consumerTag, taskHandler)

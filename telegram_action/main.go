@@ -200,7 +200,7 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 		resultPublisher = worker.NewPublisher()
 	}
 
-	taskHandler := telegramSvc.HandleTaskRouter(provider, resultPublisher, seq)
+	taskHandler := telegramSvc.HandleTaskRouter(provider, resultPublisher, seq, payload.ID, config)
 
 	consumerTag := fmt.Sprintf("telegram-action-%s", payload.WorkflowID)
 	consumer := worker.NewConsumer(rabbitmqURL, payload.QueueName, consumerTag, taskHandler)

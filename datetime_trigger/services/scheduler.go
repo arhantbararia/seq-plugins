@@ -40,8 +40,8 @@ func NewScheduler(triggerID, workflowID string, config models.TriggerConfig, seq
 // The loop ticks every minute and checks whether the current time matches the schedule.
 func (s *Scheduler) Start() {
 	capKey := s.Config.CapabilityKey
-	log.Printf("[Scheduler #%d] [Workflow: %s] Starting trigger=%s capability=%s config=%+v",
-		s.SequenceNumber, s.WorkflowID, s.TriggerID, capKey, s.Config)
+	log.Printf("[Scheduler #%d] [Workflow: %s] [Instance: %s] Starting capability=%s",
+		s.SequenceNumber, s.WorkflowID, s.TriggerID, capKey)
 
 	go func() {
 		// Align to the next whole minute so checks are always at :00 seconds.
@@ -64,7 +64,7 @@ func (s *Scheduler) Start() {
 			case t := <-ticker.C:
 				s.check(t)
 			case <-s.stopChan:
-				log.Printf("[Scheduler #%d] [Workflow: %s] Stopped trigger=%s", s.SequenceNumber, s.WorkflowID, s.TriggerID)
+				log.Printf("[Scheduler #%d] [Workflow: %s] [Instance: %s] Stopped", s.SequenceNumber, s.WorkflowID, s.TriggerID)
 				return
 			}
 		}
@@ -98,9 +98,9 @@ func (s *Scheduler) check(t time.Time) {
 	}
 
 	if err := s.Publisher.Publish(s.WorkflowID, event); err != nil {
-		log.Printf("[Scheduler #%d] [Workflow: %s] Failed to publish event trigger=%s: %v", s.SequenceNumber, s.WorkflowID, s.TriggerID, err)
+		log.Printf("[Scheduler #%d] [Workflow: %s] [Instance: %s] Error publishing event: %v", s.SequenceNumber, s.WorkflowID, s.TriggerID, err)
 	} else {
-		log.Printf("[Scheduler #%d] [Workflow: %s] Fired capability=%s trigger=%s time=%s", s.SequenceNumber, s.WorkflowID, capKey, s.TriggerID, t.Format(time.RFC3339))
+		log.Printf("[Scheduler #%d] [Workflow: %s] [Instance: %s] Successfully fired %s at %s", s.SequenceNumber, s.WorkflowID, s.TriggerID, capKey, t.Format(time.RFC3339))
 	}
 }
 
