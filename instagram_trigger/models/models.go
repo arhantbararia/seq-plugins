@@ -7,12 +7,11 @@ type TriggerConfig struct {
 	CapabilityKey string              `json:"capability_key"`
 	AuthContext   map[string]AuthData `json:"_auth_context"`
 
-	// GitHub specific fields
-	Repository             string `json:"repository,omitempty"`               // e.g. "owner/repo"
-	UsernameOrOrganization string `json:"username_or_organization,omitempty"` // e.g. "octocat"
+	// Instagram specific fields
+	Hashtag string `json:"hashtag,omitempty"` // Hashtag filter for photo/video with hashtag capabilities
 }
 
-// AuthData carries credentials (Github Uses API Key, but others kept for compatibility).
+// AuthData carries credentials. Instagram uses OAuth 2.0
 type AuthData struct {
 	AccessToken       string    `json:"access_token"`
 	RefreshToken      string    `json:"refresh_token"`
@@ -44,7 +43,7 @@ type RegistrationRequest struct {
 	ID                    string             `json:"id"`
 	Name                  string             `json:"name"`
 	ContainerType         string             `json:"container_type"`          //Trigger
-	PluginProviderService string             `json:"plugin_provider_service"` // Cron
+	PluginProviderService string             `json:"plugin_provider_service"` // Instagram
 	PluginHost            string             `json:"plugin_host"`
 	PluginPort            string             `json:"plugin_port"`
 	Endpoints             map[string]string  `json:"endpoints"`
@@ -54,10 +53,10 @@ type RegistrationRequest struct {
 
 // PluginCapability describes one triggering capability.
 type PluginCapability struct {
-	UniqueKey     string                 `json:"unique_key"`     //datetime_every_hour_at
-	Name          string                 `json:"name"`           // Every Hour
-	Description   string                 `json:"description"`    // Triggers once every hour at a specific minute (MM).
+	UniqueKey     string                 `json:"unique_key"`     //any_new_photo_by you
+	Name          string                 `json:"name"`           // Any New Photo by you
+	Description   string                 `json:"description"`    // Triggers when a new photo is posted by you.
 	ComponentType string                 `json:"component_type"` //TRIGGER
-	ConfigSchema  map[string]interface{} `json:"config_schema"`  // {"scheduled_at": "string"} // "MM"
-	OutputSchema  map[string]interface{} `json:"output_schema"`  // {"check_time": "string"} // RFC3339 UTC timestamp when the trigger fired
+	ConfigSchema  map[string]interface{} `json:"config_schema"`  // for example {"hashtag":"string"}
+	OutputSchema  map[string]interface{} `json:"output_schema"`  // {"post_url": "string"}
 }

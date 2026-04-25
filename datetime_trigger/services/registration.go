@@ -1,5 +1,37 @@
 package services
 
+// plugin will register following capabilities to workflow_executor
+
+// - plugin-service-provider: Date & Time
+//   Auth: None
+//   function: Every day at
+//   output: CheckTime
+//   required_config_data: Specific time
+
+// - plugin-service-provider: Date & Time
+//   Auth: None
+//   function: Every hour at
+//   output: CheckTime
+//   required_config_data: Specific time
+
+// - plugin-service-provider: Date & Time
+//   Auth: None
+//   function: Every day of the week at
+//   output: CheckTime
+//   required_config_data: Day of week, time
+
+// - plugin-service-provider: Date & Time
+//   Auth: None
+//   function: Every month on the
+//   output: CheckTime
+//   required_config_data: Day of month, time
+
+// - plugin-service-provider: Date & Time
+//   Auth: None
+//   function: Every year on
+//   output: CheckTime
+//   required_config_data: Date, time
+
 import (
 	"bytes"
 	"encoding/json"
@@ -20,7 +52,7 @@ func NewRegistrationService() *RegistrationService {
 
 // Register sends a POST /register to the workflow_executor.
 func (s *RegistrationService) Register() error {
-	executorURL := os.Getenv("WORKFLOW_EXECUTOR_URL")
+	executorURL := os.Getenv("EXECUTOR_URL")
 	if executorURL == "" {
 		executorURL = "http://localhost:8082"
 	}
@@ -33,10 +65,6 @@ func (s *RegistrationService) Register() error {
 		port = "8085"
 	}
 
-	outputSchema := map[string]interface{}{
-		"check_time": "string", // RFC3339 UTC timestamp when the trigger fired
-	}
-
 	// Build a unique ID: HOSTNAME is shared across all plugins in a unified container,
 	// so we append a plugin-specific suffix to ensure each gets its own DB row.
 	pluginID := os.Getenv("HOSTNAME")
@@ -44,7 +72,7 @@ func (s *RegistrationService) Register() error {
 		pluginID = pluginID + "-datetime-trigger"
 	}
 
-	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
+	prefix := "/datetime/trigger"
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "Date & Time Trigger",
@@ -57,7 +85,7 @@ func (s *RegistrationService) Register() error {
 			"remove": prefix + "/remove",
 			"health": prefix + "/health",
 		},
-		AuthTypes:             []string{"None"},
+		AuthTypes: []string{"None"},
 		Capabilities: []models.PluginCapability{
 			{
 				UniqueKey:     "datetime_every_day_at",
@@ -67,7 +95,9 @@ func (s *RegistrationService) Register() error {
 				ConfigSchema: map[string]interface{}{
 					"scheduled_at": "string", // "HH:MM"
 				},
-				OutputSchema: outputSchema,
+				OutputSchema: map[string]interface{}{
+					"check_time": "string", // RFC3339 UTC timestamp when the trigger fired
+				},
 			},
 			{
 				UniqueKey:     "datetime_every_hour_at",
@@ -77,7 +107,9 @@ func (s *RegistrationService) Register() error {
 				ConfigSchema: map[string]interface{}{
 					"scheduled_at": "string", // "MM" (00-59)
 				},
-				OutputSchema: outputSchema,
+				OutputSchema: map[string]interface{}{
+					"check_time": "string", // RFC3339 UTC timestamp when the trigger fired
+				},
 			},
 			{
 				UniqueKey:     "datetime_every_day_of_week_at",
@@ -88,7 +120,9 @@ func (s *RegistrationService) Register() error {
 					"day_of_week":  "string", // e.g. "Monday"
 					"scheduled_at": "string", // "HH:MM"
 				},
-				OutputSchema: outputSchema,
+				OutputSchema: map[string]interface{}{
+					"check_time": "string", // RFC3339 UTC timestamp when the trigger fired
+				},
 			},
 			{
 				UniqueKey:     "datetime_every_month_on",
@@ -99,7 +133,9 @@ func (s *RegistrationService) Register() error {
 					"day_of_month": "integer", // 1-31
 					"scheduled_at": "string",  // "HH:MM"
 				},
-				OutputSchema: outputSchema,
+				OutputSchema: map[string]interface{}{
+					"check_time": "string", // RFC3339 UTC timestamp when the trigger fired
+				},
 			},
 			{
 				UniqueKey:     "datetime_every_year_on",
@@ -109,7 +145,9 @@ func (s *RegistrationService) Register() error {
 				ConfigSchema: map[string]interface{}{
 					"scheduled_at": "string", // "MM-DD HH:MM"
 				},
-				OutputSchema: outputSchema,
+				OutputSchema: map[string]interface{}{
+					"check_time": "string", // RFC3339 UTC timestamp when the trigger fired
+				},
 			},
 		},
 	}

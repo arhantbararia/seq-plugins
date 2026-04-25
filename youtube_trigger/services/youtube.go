@@ -75,6 +75,7 @@ type Poller struct {
 	Publisher      *worker.Publisher
 	httpClient     *http.Client
 	stopChan       chan struct{}
+	stopOnce       sync.Once
 	mu             sync.Mutex
 	Updater        ConfigUpdater
 
@@ -221,7 +222,7 @@ func (p *Poller) Start() {
 }
 
 func (p *Poller) Stop() {
-	close(p.stopChan)
+	p.stopOnce.Do(func() { close(p.stopChan) })
 }
 
 // doRequest is the public entry point; it allows one automatic retry on 401.

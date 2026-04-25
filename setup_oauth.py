@@ -10,6 +10,8 @@ def setup_oauth():
     google_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
     spotify_id = os.environ.get("SPOTIFY_CLIENT_ID")
     spotify_secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
+    instagram_id = os.environ.get("INSTAGRAM_CLIENT_ID")
+    instagram_secret = os.environ.get("INSTAGRAM_CLIENT_SECRET")
 
     # Validate environment variables
     missing = []
@@ -72,6 +74,54 @@ def setup_oauth():
             (json.dumps(["oauth2"]), json.dumps(spotify_metadata))
         )
         print(f"Spotify update executed. Rows affected: {cur.rowcount}")
+
+        # 3. Update Instagram Provider
+        instagram_metadata = {
+            "oauth": {
+                "client_id": instagram_id,
+                "client_secret": instagram_secret,
+                "authorize_url": "https://www.instagram.com/oauth/authorize",
+                "token_url": "https://api.instagram.com/oauth/access_token",
+                "scopes": "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights",
+                "redirect_uri": "https://sequels.diy/auth/plugin/callback"
+            }
+        }
+        
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET auth_types = %s,
+                metadata_schema = %s
+            WHERE name = 'Instagram';
+            """,
+            (json.dumps(["oauth2"]), json.dumps(instagram_metadata))
+        )
+        print(f"Instagram update executed. Rows affected: {cur.rowcount}")
+
+        # 4. Update X.com (Twitter) Provider
+        x_id = os.environ.get("X_CLIENT_ID", os.environ.get("TWITTER_CLIENT_ID", ""))
+        x_secret = os.environ.get("X_CLIENT_SECRET", os.environ.get("TWITTER_CLIENT_SECRET", ""))
+        x_metadata = {
+            "oauth": {
+                "client_id": x_id,
+                "client_secret": x_secret,
+                "authorize_url": "https://twitter.com/i/oauth2/authorize",
+                "token_url": "https://api.x.com/2/oauth2/token",
+                "scopes": "tweet.write tweet.read users.read offline.access",
+                "redirect_uri": "https://sequels.diy/auth/plugin/callback"
+            }
+        }
+        
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET auth_types = %s,
+                metadata_schema = %s
+            WHERE name = 'X.com';
+            """,
+            (json.dumps(["oauth2"]), json.dumps(x_metadata))
+        )
+        print(f"X.com update executed. Rows affected: {cur.rowcount}")
 
         # Commit and close
         conn.commit()

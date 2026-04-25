@@ -67,6 +67,7 @@ type Poller struct {
 	Publisher      *worker.Publisher
 	httpClient     *http.Client
 	stopChan       chan struct{}
+	stopOnce       sync.Once
 	lastCheck      time.Time // kept for legacy capabilities that still use time-based filtering
 	mu             sync.Mutex
 
@@ -192,7 +193,7 @@ func (p *Poller) Start() {
 }
 
 func (p *Poller) Stop() {
-	close(p.stopChan)
+	p.stopOnce.Do(func() { close(p.stopChan) })
 }
 
 // doRequest is the public entry point; it allows one automatic retry on 401.

@@ -6,36 +6,25 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github_trigger/models"
-	"github_trigger/services"
-	"github_trigger/worker"
+	"instagram_trigger/models"
+	"instagram_trigger/services"
+	"instagram_trigger/worker"
 )
 
-// ── Global state ─────────────────────────────────────────────────────────────
-
+// Global state
 var (
 	publisher *worker.Publisher
 	pollers   = make(map[string]*services.Poller)
-	// configs stores trigger configurations, keyed by trigger instance ID.
-	configs = &sync.Map{}
-	mu      sync.Mutex
+	configs   = &sync.Map{}
+	mu        sync.Mutex
 
 	pollerCount uint64
 )
-
-func getMapKeys(m map[string]models.AuthData) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// ── Setup payload (sent by workflow_executor) ─────────────────────────────────
 
 type SetupPayload struct {
 	ID            string                 `json:"id"`
@@ -48,10 +37,14 @@ type SetupPayload struct {
 
 type RemovePayload struct {
 	ID         string `json:"id"`
+	TriggerID  string `json:"trigger_id"`
 	WorkflowID string `json:"workflow_id"`
 }
 
 func stringField(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
 	if v, ok := m[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -60,31 +53,55 @@ func stringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
-// buildTriggerConfig extracts typed fields from the raw config map.
-// It returns a fresh models.TriggerConfig where AuthContext is an independent map reference.
-func buildTriggerConfig(req SetupPayload) models.TriggerConfig {
-	cfg := models.TriggerConfig{
-		CapabilityKey: req.CapabilityKey,
+// Convert _auth_context (if present) into typed map
+func parseAuthContext(cfg map[string]interface{}) map[string]models.AuthData {
+	if cfg == nil {
+		return nil
 	}
-
-	if authCtxRaw, ok := req.Config["_auth_context"]; ok {
-		// Re-marshal and unmarshal to convert map[string]interface{} → map[string]models.AuthData
-		b, _ := json.Marshal(authCtxRaw)
-		var authMap map[string]models.AuthData
-		if err := json.Unmarshal(b, &authMap); err == nil {
-			cfg.AuthContext = authMap
+	if v, ok := cfg["_auth_context"]; ok {
+		// marshal/unmarshal to convert types
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil
 		}
+		var out map[string]models.AuthData
+		if err := json.Unmarshal(b, &out); err != nil {
+			return nil
+		}
+		return out
 	}
-
-	// Extract GitHub specific fields
-	cfg.Repository = stringField(req.Config, "repository")
-	cfg.UsernameOrOrganization = stringField(req.Config, "username_or_organization")
-
-	return cfg
+	return nil
 }
 
-// ── Handlers ──────────────────────────────────────────────────────────────────
+func buildTriggerConfig(req SetupPayload) models.TriggerConfig {
+	return models.TriggerConfig{
+		CapabilityKey: req.CapabilityKey,
+		Hashtag:       stringField(req.Config, "hashtag"),
+		AuthContext:   parseAuthContext(req.Config),
+	}
+}
 
+// updater implements services.ConfigUpdater and persists refreshed auth
+type updater struct{}
+
+func (u *updater) UpdateAuth(id string, auth map[string]models.AuthData) error {
+	if id == "" {
+		return fmt.Errorf("empty id")
+	}
+	val, ok := configs.Load(id)
+	if !ok {
+		return fmt.Errorf("config for id not found")
+	}
+	cfg, ok := val.(models.TriggerConfig)
+	if !ok {
+		return fmt.Errorf("invalid config type")
+	}
+	cfg.AuthContext = auth
+	configs.Store(id, cfg)
+	return nil
+}
+
+// Handlers
 func handleSetup(w http.ResponseWriter, r *http.Request) {
 	var payload SetupPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -101,7 +118,6 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	config := buildTriggerConfig(payload)
 
-	// Store the config, keyed by trigger instance ID.
 	configs.Store(id, config)
 
 	mu.Lock()
@@ -113,9 +129,9 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	seq := atomic.AddUint64(&pollerCount, 1)
-	poller := services.NewPoller(id, payload.WorkflowID, config, seq, publisher)
-	pollers[id] = poller
-	poller.Start()
+	p := services.NewPoller(id, payload.WorkflowID, config, seq, publisher, &updater{})
+	pollers[id] = p
+	p.Start()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -130,6 +146,9 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := payload.ID
+	if id == "" {
+		id = payload.TriggerID
+	}
 	workflowID := payload.WorkflowID
 
 	log.Printf("[Remove] id=%s workflow=%s", id, workflowID)
@@ -139,7 +158,6 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 
 	removedCount := 0
 
-	// 1. Try to find by ID
 	if id != "" {
 		if poller, exists := pollers[id]; exists {
 			poller.Stop()
@@ -150,7 +168,6 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Fallback: Search all pollers by WorkflowID if no specific ID matched
 	if workflowID != "" {
 		for pID, poller := range pollers {
 			if poller.WorkflowID == workflowID {
@@ -172,6 +189,37 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"removed","removed_count":` + fmt.Sprintf("%d", removedCount) + `}`))
 }
 
+func handleValidate(w http.ResponseWriter, r *http.Request) {
+	var payload SetupPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	id := payload.ID
+	if id == "" {
+		id = payload.TriggerID
+	}
+
+	config := buildTriggerConfig(payload)
+
+	val, ok := configs.Load(id)
+	isDuplicate := false
+	if ok {
+		existingConfig := val.(models.TriggerConfig)
+		if reflect.DeepEqual(existingConfig, config) {
+			isDuplicate = true
+			log.Printf("[Validate] Duplicate detected for id=%s", id)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_duplicate": isDuplicate,
+	})
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	active := len(pollers)
@@ -181,7 +229,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":          "ok",
-		"message":         "setup_complete",
+		"message":         "healthy",
 		"active_triggers": active,
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 	})
@@ -197,15 +245,11 @@ func getPort() string {
 	return "8080"
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-
 func main() {
-	log.Println("[Main] Starting Github Trigger plugin")
+	log.Println("[Main] Starting Instagram Trigger plugin")
 
-	// Initialise RabbitMQ publisher.
 	publisher = worker.NewPublisher()
 
-	// Register with workflow_executor in the background with retry.
 	regService := services.NewRegistrationService()
 	go func() {
 		for i := 0; i < 10; i++ {
@@ -221,10 +265,10 @@ func main() {
 		log.Println("[Main] WARNING: Could not register with executor after 10 attempts")
 	}()
 
-	// HTTP Routes
-	prefix := "/github/trigger"
+	prefix := "/instagram/trigger"
 	http.HandleFunc(prefix+"/setup", handleSetup)
 	http.HandleFunc(prefix+"/remove", handleRemove)
+	http.HandleFunc(prefix+"/validate", handleValidate)
 	http.HandleFunc(prefix+"/health", handleHealth)
 
 	port := getPort()

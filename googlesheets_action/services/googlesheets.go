@@ -270,7 +270,8 @@ func (s *GoogleSheetsService) HandleTaskRouter(cfgProvider ConfigProvider, publi
 			return
 		}
 
-		// Retry once on 401 Unauthorized if not already refreshed
+		// Retry once on 401 Unauthorized — the token may have expired mid-flight
+		// even though GetValidAuth checked upfront.
 		if procErr != nil && strings.Contains(procErr.Error(), "401") {
 			log.Printf("[GoogleSheetsService] Action failed with 401, trying immediate refresh and retry for workflow %s", task.WorkflowID)
 			newAuth, refreshErr := s.RefreshAccessToken(auth)
@@ -306,41 +307,71 @@ func (s *GoogleSheetsService) HandleTaskRouter(cfgProvider ConfigProvider, publi
 	}
 }
 
+// ── HTTP request helper ──────────────────────────────────────────────────────
+
+// doRequest executes an HTTP request against the Google Sheets API with
+// automatic retry on 429 (rate limit) responses. It retries up to 2 times
+// with exponential back-off (1s, 2s).
+//
+// Google Sheets API: free quota is 300 requests per minute per project for
+// read requests and 60 requests per minute per project for write requests.
+// No separate payment is required for normal usage.
 func (s *GoogleSheetsService) doRequest(method, endpoint string, auth models.AuthData, body []byte) (map[string]interface{}, int64, error) {
-	start := time.Now()
-
-	req, err := http.NewRequest(method, endpoint, bytes.NewBuffer(body))
-	if err != nil {
-		elapsed := time.Since(start).Milliseconds()
-		return nil, elapsed, fmt.Errorf("creating http request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+auth.AccessToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.httpClient.Do(req)
-	elapsed := time.Since(start).Milliseconds()
-	if err != nil {
-		return nil, elapsed, fmt.Errorf("http request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, elapsed, fmt.Errorf("reading response body: %w", err)
-	}
+	const maxRetries = 2
 
 	var result map[string]interface{}
-	if len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, &result); err != nil {
-			// fallback if it's not JSON
-			result = map[string]interface{}{"raw": string(respBody)}
-		}
-	} else {
-		result = map[string]interface{}{"status": "success"}
-	}
+	var elapsed int64
+	var lastErr error
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		start := time.Now()
+
+		req, err := http.NewRequest(method, endpoint, bytes.NewBuffer(body))
+		if err != nil {
+			elapsed = time.Since(start).Milliseconds()
+			return nil, elapsed, fmt.Errorf("creating http request: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+auth.AccessToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := s.httpClient.Do(req)
+		elapsed = time.Since(start).Milliseconds()
+		if err != nil {
+			return nil, elapsed, fmt.Errorf("http request failed: %w", err)
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, elapsed, fmt.Errorf("reading response body: %w", err)
+		}
+
+		// Parse response
+		result = nil
+		if len(respBody) > 0 {
+			if jsonErr := json.Unmarshal(respBody, &result); jsonErr != nil {
+				// fallback if it's not JSON
+				result = map[string]interface{}{"raw": string(respBody)}
+			}
+		} else {
+			result = map[string]interface{}{"status": "success"}
+		}
+
+		// Success
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return result, elapsed, nil
+		}
+
+		// Rate limited — retry with back-off
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries {
+			backoff := time.Duration(attempt+1) * time.Second
+			log.Printf("[doRequest] 429 Rate limited, retrying in %v (attempt %d/%d)", backoff, attempt+1, maxRetries)
+			time.Sleep(backoff)
+			continue
+		}
+
+		// Build error message from API response
 		errMsg := "API error"
 		if errObj, ok := result["error"].(map[string]interface{}); ok {
 			if msg, ok := errObj["message"].(string); ok {
@@ -349,31 +380,53 @@ func (s *GoogleSheetsService) doRequest(method, endpoint string, auth models.Aut
 		} else if strings.TrimSpace(string(respBody)) != "" {
 			errMsg = string(respBody)
 		}
-		return nil, elapsed, fmt.Errorf("google sheets api returned %d: %s", resp.StatusCode, errMsg)
+		lastErr = fmt.Errorf("google sheets api returned %d: %s", resp.StatusCode, errMsg)
 	}
 
-	return result, elapsed, nil
+	return nil, elapsed, lastErr
 }
 
+// ── Action: Update Cell ──────────────────────────────────────────────────────
+
+// UpdateCell writes a single value to a specific cell in a Google Sheets
+// spreadsheet using the spreadsheets.values.update (PUT) endpoint.
+//
+// Endpoint:
+//
+//	PUT https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}?valueInputOption=USER_ENTERED
+//
+// Required config:
+//   - spreadsheet_id (string) — the ID extracted from the spreadsheet URL
+//   - worksheet      (string) — the sheet/tab name (e.g. "Sheet1")
+//   - cell_coordinates (string) — A1 notation of the target cell (e.g. "A1", "B5")
+//   - value          (string) — the value to write
+//
+// Google Sheets API quota: 60 write requests/min/project (free, no payment required).
 func (s *GoogleSheetsService) UpdateCell(auth models.AuthData, cfg models.ActionConfig) (map[string]interface{}, int64, error) {
+	// ── Validate required fields ────────────────────────────────────────
 	if cfg.SpreadsheetID == "" {
 		return nil, 0, fmt.Errorf("spreadsheet_id is required")
 	}
 	if cfg.CellCoordinates == "" {
-		return nil, 0, fmt.Errorf("cell_coordinates is required")
+		return nil, 0, fmt.Errorf("cell_coordinates is required (e.g. \"A1\", \"B5\")")
 	}
 
+	// ── Build A1 range string ───────────────────────────────────────────
 	rangeStr := cfg.CellCoordinates
 	if cfg.Worksheet != "" {
+		// Single-quote the sheet name to handle names with spaces/special chars.
 		rangeStr = fmt.Sprintf("'%s'!%s", cfg.Worksheet, cfg.CellCoordinates)
 	}
 
+	// ── Build endpoint URL ──────────────────────────────────────────────
+	// The range must be path-escaped because it may contain ! and ' characters.
 	endpoint := fmt.Sprintf("%s/%s/values/%s?valueInputOption=USER_ENTERED",
 		googleSheetsAPIBase,
 		url.PathEscape(cfg.SpreadsheetID),
 		url.PathEscape(rangeStr),
 	)
 
+	// ── Build request body (ValueRange) ─────────────────────────────────
 	bodyData := map[string]interface{}{
 		"range":          rangeStr,
 		"majorDimension": "ROWS",
@@ -381,37 +434,78 @@ func (s *GoogleSheetsService) UpdateCell(auth models.AuthData, cfg models.Action
 			{cfg.Value},
 		},
 	}
-	body, _ := json.Marshal(bodyData)
+	body, err := json.Marshal(bodyData)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshaling request body: %w", err)
+	}
+
+	log.Printf("[UpdateCell] spreadsheet=%s range=%s value=%q",
+		cfg.SpreadsheetID, rangeStr, cfg.Value)
 
 	return s.doRequest("PUT", endpoint, auth, body)
 }
 
+// ── Action: Add Row ──────────────────────────────────────────────────────────
+
+// AddRow appends a new row of values to a Google Sheets spreadsheet using the
+// spreadsheets.values.append (POST) endpoint.
+//
+// Endpoint:
+//
+//	POST https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}:append
+//	     ?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS
+//
+// Required config:
+//   - spreadsheet_id (string) — the ID extracted from the spreadsheet URL
+//   - worksheet      (string) — the sheet/tab name (e.g. "Sheet1")
+//   - row_values     (string) — either a JSON array (e.g. '["a","b","c"]') or
+//     a comma-separated string (e.g. "a, b, c")
+//
+// The insertDataOption=INSERT_ROWS parameter ensures that existing data is never
+// overwritten — new rows are always inserted below the last occupied row.
+//
+// Google Sheets API quota: 60 write requests/min/project (free, no payment required).
 func (s *GoogleSheetsService) AddRow(auth models.AuthData, cfg models.ActionConfig) (map[string]interface{}, int64, error) {
+	// ── Validate required fields ────────────────────────────────────────
 	if cfg.SpreadsheetID == "" {
 		return nil, 0, fmt.Errorf("spreadsheet_id is required")
 	}
-
-	rangeStr := "A1"
-	if cfg.Worksheet != "" {
-		rangeStr = fmt.Sprintf("'%s'!%s", cfg.Worksheet, rangeStr)
+	if cfg.RowValues == "" {
+		return nil, 0, fmt.Errorf("row_values is required (JSON array or comma-separated string)")
 	}
 
-	endpoint := fmt.Sprintf("%s/%s/values/%s:append?valueInputOption=USER_ENTERED",
+	// ── Build A1 range for append ───────────────────────────────────────
+	// The range tells the API where to look for an existing table. "A1" is the
+	// conventional anchor; the API will find the last occupied row and append below.
+	rangeStr := "A1"
+	if cfg.Worksheet != "" {
+		rangeStr = fmt.Sprintf("'%s'!A1", cfg.Worksheet)
+	}
+
+	// ── Build endpoint URL ──────────────────────────────────────────────
+	// insertDataOption=INSERT_ROWS prevents overwriting existing data.
+	endpoint := fmt.Sprintf("%s/%s/values/%s:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS",
 		googleSheetsAPIBase,
 		url.PathEscape(cfg.SpreadsheetID),
 		url.PathEscape(rangeStr),
 	)
 
-	// Try parsing RowValues as JSON array
+	// ── Parse row values ────────────────────────────────────────────────
 	var row []interface{}
+	// First, try parsing as a JSON array (e.g. '["hello", 42, true]').
 	if err := json.Unmarshal([]byte(cfg.RowValues), &row); err != nil {
-		// fallback to comma separated
+		// Fallback: treat as comma-separated values.
 		parts := strings.Split(cfg.RowValues, ",")
 		for _, p := range parts {
 			row = append(row, strings.TrimSpace(p))
 		}
 	}
 
+	if len(row) == 0 {
+		return nil, 0, fmt.Errorf("row_values resolved to an empty row — nothing to append")
+	}
+
+	// ── Build request body (ValueRange) ─────────────────────────────────
 	bodyData := map[string]interface{}{
 		"range":          rangeStr,
 		"majorDimension": "ROWS",
@@ -419,7 +513,13 @@ func (s *GoogleSheetsService) AddRow(auth models.AuthData, cfg models.ActionConf
 			row,
 		},
 	}
-	body, _ := json.Marshal(bodyData)
+	body, err := json.Marshal(bodyData)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshaling request body: %w", err)
+	}
+
+	log.Printf("[AddRow] spreadsheet=%s worksheet=%s rowCells=%d",
+		cfg.SpreadsheetID, cfg.Worksheet, len(row))
 
 	return s.doRequest("POST", endpoint, auth, body)
 }

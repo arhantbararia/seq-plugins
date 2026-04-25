@@ -140,7 +140,7 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config := buildTriggerConfig(payload)
-	
+
 	// Check if this ID already exists and has identical config
 	val, ok := configs.Load(payload.ID)
 	isDuplicate := false
@@ -148,10 +148,10 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 		existingConfig := val.(models.TriggerConfig)
 		// Compare key parts of the config
 		if reflect.DeepEqual(existingConfig.AuthContext, config.AuthContext) &&
-		   existingConfig.CapabilityKey == config.CapabilityKey &&
-		   existingConfig.ScheduledAt == config.ScheduledAt &&
-		   existingConfig.DayOfWeek == config.DayOfWeek &&
-		   existingConfig.DayOfMonth == config.DayOfMonth {
+			existingConfig.CapabilityKey == config.CapabilityKey &&
+			existingConfig.ScheduledAt == config.ScheduledAt &&
+			existingConfig.DayOfWeek == config.DayOfWeek &&
+			existingConfig.DayOfMonth == config.DayOfMonth {
 			isDuplicate = true
 			log.Printf("[Validate] Duplicate detected for id=%s", payload.ID)
 		}
@@ -179,6 +179,16 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func getPort() string {
+	if port := os.Getenv("PLUGIN_LISTEN_PORT"); port != "" {
+		return port
+	}
+	if port := os.Getenv("PLUGIN_PORT"); port != "" {
+		return port
+	}
+	return "8080"
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -204,7 +214,7 @@ func main() {
 	}()
 
 	// HTTP routes.
-	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
+	prefix := "/datetime/trigger"
 	http.HandleFunc(prefix+"/setup", handleSetup)
 	http.HandleFunc(prefix+"/remove", handleRemove)
 	http.HandleFunc(prefix+"/validate", handleValidate)
@@ -212,13 +222,7 @@ func main() {
 
 	// PLUGIN_LISTEN_PORT is the internal port for Nginx proxying (set by start.sh).
 	// Falls back to PLUGIN_PORT for standalone/local deployments.
-	port := os.Getenv("PLUGIN_LISTEN_PORT")
-	if port == "" {
-		port = os.Getenv("PLUGIN_PORT")
-	}
-	if port == "" {
-		port = "8085"
-	}
+	port := getPort()
 
 	log.Printf("[Main] Listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {

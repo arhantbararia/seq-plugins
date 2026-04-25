@@ -21,7 +21,7 @@ func NewRegistrationService() *RegistrationService {
 }
 
 func (s *RegistrationService) Register() error {
-	executorURL := os.Getenv("WORKFLOW_EXECUTOR_URL")
+	executorURL := os.Getenv("EXECUTOR_URL")
 	if executorURL == "" {
 		executorURL = "http://localhost:8082"
 	}
@@ -39,9 +39,11 @@ func (s *RegistrationService) Register() error {
 	pluginID := os.Getenv("HOSTNAME")
 	if pluginID != "" {
 		pluginID = pluginID + "-youtube-trigger"
+	} else {
+		pluginID = host + ":" + port + "-youtube-trigger"
 	}
 
-	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
+	prefix := "/youtube/trigger"
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "YouTube Trigger",
@@ -54,7 +56,7 @@ func (s *RegistrationService) Register() error {
 			"remove": prefix + "/remove",
 			"health": prefix + "/health",
 		},
-		AuthTypes:             []string{"OAuth 2.0"},
+		AuthTypes: []string{"OAuth 2.0"},
 		Capabilities: []models.PluginCapability{
 			{
 				UniqueKey:     "youtube_new_video_from_search",

@@ -86,9 +86,6 @@ func stringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
-
-
-
 // buildActionConfig extracts typed fields from the raw config map.
 func buildActionConfig(req SetupPayload) models.ActionConfig {
 	cfg := models.ActionConfig{
@@ -267,8 +264,8 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "removed",
+		"success":       true,
+		"message":       "removed",
 		"removed_count": removedCount,
 	})
 }
@@ -282,16 +279,16 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config := buildActionConfig(payload)
-	
+
 	// Check if this ID already exists and has identical config
 	val, ok := configs.Load(payload.ID)
 	isDuplicate := false
 	if ok {
 		existingConfig := val.(models.ActionConfig)
 		// Compare key parts of the config
-		if reflect.DeepEqual(existingConfig.RawConfig, config.RawConfig) && 
-		   reflect.DeepEqual(existingConfig.AuthContext, config.AuthContext) &&
-		   existingConfig.CapabilityKey == config.CapabilityKey {
+		if reflect.DeepEqual(existingConfig.RawConfig, config.RawConfig) &&
+			reflect.DeepEqual(existingConfig.AuthContext, config.AuthContext) &&
+			existingConfig.CapabilityKey == config.CapabilityKey {
 			isDuplicate = true
 			log.Printf("[Validate] Duplicate detected for id=%s", payload.ID)
 		}
@@ -319,6 +316,16 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func getPort() string {
+	if port := os.Getenv("PLUGIN_LISTEN_PORT"); port != "" {
+		return port
+	}
+	if port := os.Getenv("PLUGIN_PORT"); port != "" {
+		return port
+	}
+	return "8080"
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -344,7 +351,7 @@ func main() {
 	}()
 
 	// HTTP routes.
-	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
+	prefix := "/telegram/action"
 	http.HandleFunc(prefix+"/setup", handleSetup)
 	http.HandleFunc(prefix+"/remove", handleRemove)
 	http.HandleFunc(prefix+"/validate", handleValidate)
@@ -352,13 +359,7 @@ func main() {
 
 	// PLUGIN_LISTEN_PORT is the internal port for Nginx proxying (set by start.sh).
 	// Falls back to PLUGIN_PORT for standalone/local deployments.
-	port := os.Getenv("PLUGIN_LISTEN_PORT")
-	if port == "" {
-		port = os.Getenv("PLUGIN_PORT")
-	}
-	if port == "" {
-		port = "8057" // Default for telegram_action
-	}
+	port := getPort()
 
 	log.Printf("[Main] Listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {

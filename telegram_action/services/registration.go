@@ -20,7 +20,7 @@ func NewRegistrationService() *RegistrationService {
 
 // Register sends a POST /register to the workflow_executor.
 func (s *RegistrationService) Register() error {
-	executorURL := os.Getenv("WORKFLOW_EXECUTOR_URL")
+	executorURL := os.Getenv("EXECUTOR_URL")
 	if executorURL == "" {
 		executorURL = "http://localhost:8082"
 	}
@@ -42,9 +42,11 @@ func (s *RegistrationService) Register() error {
 	pluginID := os.Getenv("HOSTNAME")
 	if pluginID != "" {
 		pluginID = pluginID + "-telegram-action"
+	} else {
+		pluginID = host + ":" + port + "-telegram-action"
 	}
 
-	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
+	prefix := "/telegram/action"
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "Telegram Action",

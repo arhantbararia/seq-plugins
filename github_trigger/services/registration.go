@@ -18,9 +18,8 @@ func NewRegistrationService() *RegistrationService {
 	return &RegistrationService{}
 }
 
-
 func (s *RegistrationService) Register() error {
-	executorURL := os.Getenv("WORKFLOW_EXECUTOR_URL")
+	executorURL := os.Getenv("EXECUTOR_URL")
 	if executorURL == "" {
 		executorURL = "http://localhost:8082"
 	}
@@ -30,16 +29,31 @@ func (s *RegistrationService) Register() error {
 	}
 	port := os.Getenv("PLUGIN_PORT")
 	if port == "" {
-		port = "8085"
+		port = "8089"
 	}
 
+	// Build a unique ID: HOSTNAME is shared across all plugins in a unified container,
+	// so we append a plugin-specific suffix to ensure each gets its own DB row.
+	pluginID := os.Getenv("HOSTNAME")
+	if pluginID != "" {
+		pluginID = pluginID + "-github-trigger"
+	} else {
+		pluginID = host + ":" + port + "-github-trigger"
+	}
+	prefix := "/github/trigger"
 	req := models.RegistrationRequest{
-		ID:                    os.Getenv("HOSTNAME"), // Docker sets the container ID as the HOSTNAME env var
+		ID:                    pluginID, // Docker sets the container ID as the HOSTNAME env var
 		Name:                  "GitHub Trigger",
 		ContainerType:         "trigger",
 		PluginProviderService: "GitHub",
+		PluginHost:            host,
 		PluginPort:            port,
 		AuthTypes:             []string{"Personal Access Token"},
+		Endpoints: map[string]string{
+			"setup":  prefix + "/setup",
+			"remove": prefix + "/remove",
+			"health": prefix + "/health",
+		},
 		Capabilities: []models.PluginCapability{
 			{
 				UniqueKey:     "github_new_notification_from_repo",

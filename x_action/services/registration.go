@@ -1,6 +1,5 @@
 package services
 
-//agent pls complete and check for any errors and smooth operation
 import (
 	"bytes"
 	"encoding/json"
@@ -8,21 +7,19 @@ import (
 	"log"
 	"net/http"
 	"os"
-
-	"googlesheets_action/models"
+	"x_action/models"
 )
 
-//plugin will register following capabilities to the workflow executor
+// x action plugin will register following capabilities:
+// - plugin-service-provider: X.com
+//   Auth: OAuth 2.0,
+//   function: Post a tweet
+//   required_config_data: Tweet text
 
-// - plugin-service-provider: Google Sheets
-//   Auth: OAuth 2.0
-//   function: Update cell in spreadsheet
-//   required_config_data: Spreadsheet ID, worksheet, cell coordinates, value
-
-// - plugin-service-provider: Google Sheets
-//   Auth: OAuth 2.0
-//   function: Add row to spreadsheet
-//   required_config_data: Spreadsheet ID, worksheet, row values
+// - plugin-service-provider: X.com
+//   Auth: OAuth 2.0,
+//   function: Post a tweet with image
+//   required_config_data: Tweet text, image
 
 // RegistrationService handles self-registration with the workflow_executor.
 type RegistrationService struct{}
@@ -42,57 +39,55 @@ func (s *RegistrationService) Register() error {
 	}
 	port := os.Getenv("PLUGIN_PORT")
 	if port == "" {
-		port = "8085"
+		port = "8086"
 	}
 
 	outputSchema := map[string]interface{}{
-		"result": "object",
+		"result": "object", // X.com API v2 response containing tweet data (id, text, etc.)
 	}
+
 	// Build a unique ID: HOSTNAME is shared across all plugins in a unified container,
 	// so we append a plugin-specific suffix to ensure each gets its own DB row.
 	pluginID := os.Getenv("HOSTNAME")
 	if pluginID != "" {
-		pluginID = pluginID + "-googlesheets-action"
+		pluginID = pluginID + "-x-action"
 	} else {
-		pluginID = host + ":" + port + "-googlesheets-action"
+		pluginID = host + ":" + port + "-x-action"
 	}
-	prefix := "/googlesheets/action"
+
+	prefix := "/x/action"
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
-		Name:                  "Google Sheets Action",
-		ContainerType:         "action",
-		PluginProviderService: "Google Sheets",
+		Name:                  "X Action",
+		ContainerType:         "ACTION",
+		PluginProviderService: "X.com",
 		PluginHost:            host,
 		PluginPort:            port,
-		AuthTypes:             []string{"OAUTH2"},
 		Endpoints: map[string]string{
 			"setup":  prefix + "/setup",
 			"remove": prefix + "/remove",
 			"health": prefix + "/health",
 		},
+		AuthTypes: []string{"OAUTH2"},
 		Capabilities: []models.PluginCapability{
 			{
-				UniqueKey:     "googlesheets_update_cell",
-				Name:          "Update cell in spreadsheet",
-				Description:   "Updates a specific cell in a Google Sheet.",
+				UniqueKey:     "post_a_tweet",
+				Name:          "Post a Tweet",
+				Description:   "Posts a tweet to the user's timeline.",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
-					"spreadsheet_id":   "string",
-					"worksheet":        "string",
-					"cell_coordinates": "string",
-					"value":            "string",
+					"tweet_text": "string",
 				},
 				OutputSchema: outputSchema,
 			},
 			{
-				UniqueKey:     "googlesheets_add_row",
-				Name:          "Add row to spreadsheet",
-				Description:   "Appends a row to a Google Sheet.",
+				UniqueKey:     "post_a_tweet_with_image",
+				Name:          "Post a Tweet with Image",
+				Description:   "Posts a tweet with an image to the user's timeline.",
 				ComponentType: "ACTION",
 				ConfigSchema: map[string]interface{}{
-					"spreadsheet_id": "string",
-					"worksheet":      "string",
-					"row_values":     "string",
+					"tweet_text": "string",
+					"image_url":  "string",
 				},
 				OutputSchema: outputSchema,
 			},
@@ -117,4 +112,5 @@ func (s *RegistrationService) Register() error {
 	log.Printf("[Registration] Successfully registered with executor at %s (host=%s port=%s)",
 		executorURL, host, port)
 	return nil
+
 }

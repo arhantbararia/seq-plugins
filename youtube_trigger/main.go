@@ -74,9 +74,9 @@ func extractAuthContext(raw map[string]interface{}) map[string]models.AuthData {
 // buildTriggerConfig extracts typed fields from the raw config map.
 func buildTriggerConfig(req SetupPayload) models.TriggerConfig {
 	return models.TriggerConfig{
-		CapabilityKey: req.CapabilityKey,
-		AuthContext:   extractAuthContext(req.Config),
-		SearchQuery:   stringField(req.Config, "q"),
+		CapabilityKey:   req.CapabilityKey,
+		AuthContext:     extractAuthContext(req.Config),
+		SearchQuery:     stringField(req.Config, "q"),
 		ChannelNameOrID: stringField(req.Config, "channel"),
 	}
 }
@@ -224,16 +224,16 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config := buildTriggerConfig(payload)
-	
+
 	val, ok := configs.Load(id)
 	isDuplicate := false
 	if ok {
 		existingConfig := val.(models.TriggerConfig)
 		// Compare key parts of the config
 		if reflect.DeepEqual(existingConfig.AuthContext, config.AuthContext) &&
-		   existingConfig.CapabilityKey == config.CapabilityKey &&
-		   existingConfig.SearchQuery == config.SearchQuery &&
-		   existingConfig.ChannelNameOrID == config.ChannelNameOrID {
+			existingConfig.CapabilityKey == config.CapabilityKey &&
+			existingConfig.SearchQuery == config.SearchQuery &&
+			existingConfig.ChannelNameOrID == config.ChannelNameOrID {
 			isDuplicate = true
 			log.Printf("[Validate] Duplicate detected for id=%s", id)
 		}
@@ -259,6 +259,17 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		"active_triggers": active,
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 	})
+
+}
+
+func getPort() string {
+	if port := os.Getenv("PLUGIN_LISTEN_PORT"); port != "" {
+		return port
+	}
+	if port := os.Getenv("PLUGIN_PORT"); port != "" {
+		return port
+	}
+	return "8080"
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -286,7 +297,7 @@ func main() {
 	}()
 
 	// HTTP routes.
-	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
+	prefix := "/youtube/trigger"
 	http.HandleFunc(prefix+"/setup", handleSetup)
 	http.HandleFunc(prefix+"/remove", handleRemove)
 	http.HandleFunc(prefix+"/validate", handleValidate)
@@ -294,13 +305,7 @@ func main() {
 
 	// PLUGIN_LISTEN_PORT is the internal port for Nginx proxying (set by start.sh).
 	// Falls back to PLUGIN_PORT for standalone/local deployments.
-	port := os.Getenv("PLUGIN_LISTEN_PORT")
-	if port == "" {
-		port = os.Getenv("PLUGIN_PORT")
-	}
-	if port == "" {
-		port = "8085"
-	}
+	port := getPort()
 
 	log.Printf("[Main] Listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {

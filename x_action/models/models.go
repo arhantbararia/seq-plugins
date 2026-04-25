@@ -11,15 +11,12 @@ type ActionConfig struct {
 	// Values may contain {{trigger.payload.X}} templates that get resolved at runtime.
 	RawConfig map[string]interface{} `json:"raw_config,omitempty"`
 
-	// Google Sheets specific fields
-	SpreadsheetID   string `json:"spreadsheet_id"`
-	Worksheet       string `json:"worksheet,omitempty"`
-	CellCoordinates string `json:"cell_coordinates,omitempty"`
-	Value           string `json:"value,omitempty"`
-	RowValues       string `json:"row_values,omitempty"`
+	// X (Twitter) specific fields
+	TweetText string `json:"tweet_text,omitempty"` // Text content for the tweet
+	ImageURL  string `json:"image_url,omitempty"`  // URL of image to attach (for post_a_tweet_with_image)
 }
 
-// Google Sheets Action uses OAuth 2.0
+// X uses OAuth 2.0
 type AuthData struct {
 	AccessToken       string    `json:"access_token"`
 	RefreshToken      string    `json:"refresh_token"`
@@ -64,20 +61,20 @@ type RegistrationRequest struct {
 	ID                    string             `json:"id"`
 	Name                  string             `json:"name"`
 	ContainerType         string             `json:"container_type"`          //Action
-	PluginProviderService string             `json:"plugin_provider_service"` // Cron
+	PluginProviderService string             `json:"plugin_provider_service"` // X
 	PluginHost            string             `json:"plugin_host"`
 	PluginPort            string             `json:"plugin_port"`
-	AuthTypes             []string           `json:"auth_types"` //[]
 	Endpoints             map[string]string  `json:"endpoints"`
+	AuthTypes             []string           `json:"auth_types"` //["OAUTH2"]
 	Capabilities          []PluginCapability `json:"capabilities"`
 }
 
 // PluginCapability describes one triggering capability.
 type PluginCapability struct {
-	UniqueKey     string                 `json:"unique_key"`     //datetime_every_hour_at
-	Name          string                 `json:"name"`           // Every Hour
-	Description   string                 `json:"description"`    // Triggers once every hour at a specific minute (MM).
-	ComponentType string                 `json:"component_type"` //TRIGGER
-	ConfigSchema  map[string]interface{} `json:"config_schema"`  // {"scheduled_at": "string"} // "MM"
-	OutputSchema  map[string]interface{} `json:"output_schema"`  // {"check_time": "string"} // RFC3339 UTC timestamp when the trigger fired
+	UniqueKey     string                 `json:"unique_key"`     // post_a_tweet
+	Name          string                 `json:"name"`           // Post a Tweet
+	Description   string                 `json:"description"`    // Posts a tweet to the user's timeline.
+	ComponentType string                 `json:"component_type"` //ACTION
+	ConfigSchema  map[string]interface{} `json:"config_schema"`  // {"tweet_text": "string"}
+	OutputSchema  map[string]interface{} `json:"output_schema"`  // {"tweet_id": "string", "tweet_text": "string"}
 }

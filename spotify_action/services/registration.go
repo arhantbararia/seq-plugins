@@ -1,6 +1,5 @@
 package services
 
-//agent pls complete and check for any errors and smooth operation
 import (
 	"bytes"
 	"encoding/json"
@@ -20,7 +19,7 @@ func NewRegistrationService() *RegistrationService {
 }
 
 func (s *RegistrationService) Register() error {
-	executorURL := os.Getenv("WORKFLOW_EXECUTOR_URL")
+	executorURL := os.Getenv("EXECUTOR_URL")
 	if executorURL == "" {
 		executorURL = "http://localhost:8082"
 	}
@@ -42,7 +41,7 @@ func (s *RegistrationService) Register() error {
 		pluginID = pluginID + "-spotify-action"
 	}
 
-	prefix := os.Getenv("PLUGIN_ROUTE_PREFIX")
+	prefix := "/spotify/action"
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "Spotify Action",

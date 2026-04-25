@@ -105,7 +105,7 @@ for ENTRY in $PLUGINS; do
     ROUTE_PREFIX=$(echo "$ENTRY" | cut -d: -f2)
     
     echo "Starting plugin ${BINARY} with prefix ${ROUTE_PREFIX} on internal port ${PORT}..."
-    PLUGIN_LISTEN_PORT=$PORT PLUGIN_ROUTE_PREFIX=$ROUTE_PREFIX /app/${BINARY} &
+    PLUGIN_LISTEN_PORT=$PORT /app/${BINARY} &
 
     PORT=$((PORT + 1))
 done

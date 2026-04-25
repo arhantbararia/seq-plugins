@@ -6,13 +6,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github_trigger/models"
-	"github_trigger/services"
-	"github_trigger/worker"
+	"rss_trigger/models"
+	"rss_trigger/services"
+	"rss_trigger/worker"
 )
 
 // ── Global state ─────────────────────────────────────────────────────────────
@@ -27,14 +28,6 @@ var (
 	pollerCount uint64
 )
 
-func getMapKeys(m map[string]models.AuthData) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 // ── Setup payload (sent by workflow_executor) ─────────────────────────────────
 
 type SetupPayload struct {
@@ -48,10 +41,14 @@ type SetupPayload struct {
 
 type RemovePayload struct {
 	ID         string `json:"id"`
+	TriggerID  string `json:"trigger_id"`
 	WorkflowID string `json:"workflow_id"`
 }
 
 func stringField(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
 	if v, ok := m[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -61,26 +58,12 @@ func stringField(m map[string]interface{}, key string) string {
 }
 
 // buildTriggerConfig extracts typed fields from the raw config map.
-// It returns a fresh models.TriggerConfig where AuthContext is an independent map reference.
 func buildTriggerConfig(req SetupPayload) models.TriggerConfig {
-	cfg := models.TriggerConfig{
+	return models.TriggerConfig{
 		CapabilityKey: req.CapabilityKey,
+		FeedURL:       stringField(req.Config, "feed_url"),
+		Keyword:       stringField(req.Config, "keyword"),
 	}
-
-	if authCtxRaw, ok := req.Config["_auth_context"]; ok {
-		// Re-marshal and unmarshal to convert map[string]interface{} → map[string]models.AuthData
-		b, _ := json.Marshal(authCtxRaw)
-		var authMap map[string]models.AuthData
-		if err := json.Unmarshal(b, &authMap); err == nil {
-			cfg.AuthContext = authMap
-		}
-	}
-
-	// Extract GitHub specific fields
-	cfg.Repository = stringField(req.Config, "repository")
-	cfg.UsernameOrOrganization = stringField(req.Config, "username_or_organization")
-
-	return cfg
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -130,6 +113,9 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := payload.ID
+	if id == "" {
+		id = payload.TriggerID
+	}
 	workflowID := payload.WorkflowID
 
 	log.Printf("[Remove] id=%s workflow=%s", id, workflowID)
@@ -139,7 +125,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 
 	removedCount := 0
 
-	// 1. Try to find by ID
+	// 1. Try to find by ID/TriggerID
 	if id != "" {
 		if poller, exists := pollers[id]; exists {
 			poller.Stop()
@@ -150,7 +136,7 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Fallback: Search all pollers by WorkflowID if no specific ID matched
+	// 2. Fallback: Search all pollers by WorkflowID
 	if workflowID != "" {
 		for pID, poller := range pollers {
 			if poller.WorkflowID == workflowID {
@@ -172,6 +158,37 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"removed","removed_count":` + fmt.Sprintf("%d", removedCount) + `}`))
 }
 
+func handleValidate(w http.ResponseWriter, r *http.Request) {
+	var payload SetupPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	id := payload.ID
+	if id == "" {
+		id = payload.TriggerID
+	}
+
+	config := buildTriggerConfig(payload)
+
+	val, ok := configs.Load(id)
+	isDuplicate := false
+	if ok {
+		existingConfig := val.(models.TriggerConfig)
+		if reflect.DeepEqual(existingConfig, config) {
+			isDuplicate = true
+			log.Printf("[Validate] Duplicate detected for id=%s", id)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_duplicate": isDuplicate,
+	})
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	active := len(pollers)
@@ -181,7 +198,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":          "ok",
-		"message":         "setup_complete",
+		"message":         "healthy",
 		"active_triggers": active,
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 	})
@@ -200,7 +217,7 @@ func getPort() string {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
-	log.Println("[Main] Starting Github Trigger plugin")
+	log.Println("[Main] Starting RSS Trigger plugin")
 
 	// Initialise RabbitMQ publisher.
 	publisher = worker.NewPublisher()
@@ -221,10 +238,11 @@ func main() {
 		log.Println("[Main] WARNING: Could not register with executor after 10 attempts")
 	}()
 
-	// HTTP Routes
-	prefix := "/github/trigger"
+	// HTTP routes.
+	prefix := "/rss/trigger"
 	http.HandleFunc(prefix+"/setup", handleSetup)
 	http.HandleFunc(prefix+"/remove", handleRemove)
+	http.HandleFunc(prefix+"/validate", handleValidate)
 	http.HandleFunc(prefix+"/health", handleHealth)
 
 	port := getPort()

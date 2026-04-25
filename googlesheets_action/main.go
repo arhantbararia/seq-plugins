@@ -275,6 +275,16 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func getPort() string {
+	if port := os.Getenv("PLUGIN_LISTEN_PORT"); port != "" {
+		return port
+	}
+	if port := os.Getenv("PLUGIN_PORT"); port != "" {
+		return port
+	}
+	return "8080"
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -300,14 +310,12 @@ func main() {
 	}()
 
 	// HTTP routes.
-	http.HandleFunc("/setup", handleSetup)
-	http.HandleFunc("/remove", handleRemove)
-	http.HandleFunc("/health", handleHealth)
+	prefix := "/googlesheets/action"
+	http.HandleFunc(prefix+"/setup", handleSetup)
+	http.HandleFunc(prefix+"/remove", handleRemove)
+	http.HandleFunc(prefix+"/health", handleHealth)
 
-	port := os.Getenv("PLUGIN_PORT")
-	if port == "" {
-		port = "8086"
-	}
+	port := getPort()
 
 	log.Printf("[Main] Listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
