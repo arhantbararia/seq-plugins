@@ -4,12 +4,13 @@
 *.md
 *.exe
 
-# Excluded plugins (not part of unified engine)
-github_trigger/
-googlesheets_action/
-
 # Individual plugin Dockerfiles (not needed for unified build)
 datetime_trigger/Dockerfile
 spotify_action/Dockerfile
 telegram_action/Dockerfile
 youtube_trigger/Dockerfile
+github_trigger/Dockerfile
+googlesheets_action/Dockerfile
+instagram_trigger/Dockerfile
+rss_trigger/Dockerfile
+x_action/Dockerfile
