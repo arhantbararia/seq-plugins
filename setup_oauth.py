@@ -6,8 +6,10 @@ import sys
 def setup_oauth():
     # Retrieve environment variables
     db_url = os.environ.get("GOAT_DB_URL")
-    google_id = os.environ.get("GOOGLE_CLIENT_ID")
-    google_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    youtube_client_id = os.environ.get("YOUTUBE_CLIENT_ID")
+    youtube_client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET")
+    gsheets_client_id = os.environ.get("GSHEETS_CLIENT_ID")
+    gsheets_client_secret = os.environ.get("GSHEETS_CLIENT_SECRET")
     spotify_id = os.environ.get("SPOTIFY_CLIENT_ID")
     spotify_secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
     instagram_id = os.environ.get("INSTAGRAM_CLIENT_ID")
@@ -16,9 +18,10 @@ def setup_oauth():
     # Validate environment variables
     missing = []
     if not db_url: missing.append("GOAT_DB_URL")
-    if not google_id: missing.append("GOOGLE_CLIENT_ID")
-    if not google_secret: missing.append("GOOGLE_CLIENT_SECRET")
-    
+    if not youtube_client_id: missing.append("YOUTUBE_CLIENT_ID")
+    if not youtube_client_secret: missing.append("YOUTUBE_CLIENT_SECRET")
+    if not gsheets_client_id: missing.append("GSHEETS_CLIENT_ID")
+    if not gsheets_client_secret: missing.append("GSHEETS_CLIENT_SECRET")
 
     if missing:
         print(f"Missing required environment variables: {', '.join(missing)}")
@@ -32,8 +35,8 @@ def setup_oauth():
         # 1. Update YouTube Provider
         youtube_metadata = {
             "oauth": {
-                "client_id": google_id,
-                "client_secret": google_secret,
+                "client_id": youtube_client_id,
+                "client_secret": youtube_client_secret,
                 "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
                 "token_url": "https://oauth2.googleapis.com/token",
                 "scopes": "https://www.googleapis.com/auth/youtube.readonly",
@@ -122,6 +125,29 @@ def setup_oauth():
             (json.dumps(["oauth2"]), json.dumps(x_metadata))
         )
         print(f"X.com update executed. Rows affected: {cur.rowcount}")
+
+        # 5. Update Google Sheets Provider
+        googlesheets_metadata = {
+            "oauth": {
+                "client_id": gsheets_client_id,
+                "client_secret": gsheets_client_secret,
+                "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+                "token_url": "https://oauth2.googleapis.com/token",
+                "scopes": "https://www.googleapis.com/auth/spreadsheets",
+                "redirect_uri": "https://sequels.diy/auth/plugin/callback"
+            }
+        }
+        
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET auth_types = %s,
+                metadata_schema = %s
+            WHERE name = 'Google Sheets';
+            """,
+            (json.dumps(["oauth2"]), json.dumps(googlesheets_metadata))
+        )
+        print(f"Google Sheets update executed. Rows affected: {cur.rowcount}")
 
         # Commit and close
         conn.commit()

@@ -143,11 +143,11 @@ func (s *GoogleSheetsService) GetValidAuth(workflowID string, cfgProvider Config
 
 func (s *GoogleSheetsService) RefreshAccessToken(auth models.AuthData) (models.AuthData, error) {
 	tokenURL := "https://oauth2.googleapis.com/token"
-	clientID := os.Getenv("GOOGLE_CLIENT_ID")
-	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	clientID := os.Getenv("GSHEETS_CLIENT_ID")
+	clientSecret := os.Getenv("GSHEETS_CLIENT_SECRET")
 
 	if clientID == "" || clientSecret == "" {
-		return models.AuthData{}, fmt.Errorf("GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set")
+		return models.AuthData{}, fmt.Errorf("GSHEETS_CLIENT_ID or GSHEETS_CLIENT_SECRET not set")
 	}
 
 	data := url.Values{}

@@ -106,8 +106,8 @@ func RefreshOAuth2Token(provider, refreshToken string) (*TokenResponse, error) {
 	switch strings.ToLower(provider) {
 	case "google", "youtube":
 		tokenURL = "https://oauth2.googleapis.com/token"
-		clientID = os.Getenv("GOOGLE_CLIENT_ID")
-		clientSecret = os.Getenv("GOOGLE_CLIENT_SECRET")
+		clientID = os.Getenv("YOUTUBE_CLIENT_ID")
+		clientSecret = os.Getenv("YOUTUBE_CLIENT_SECRET")
 
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
@@ -766,8 +766,8 @@ func (p *Poller) pollPlaylists() ([]map[string]interface{}, error) {
 
 // pollMyUploads retrieves the authenticated user's uploaded videos using the
 // officially recommended two-step approach:
-//   1. channels.list?mine=true → get the uploads playlist ID (cached after first call)
-//   2. playlistItems.list?playlistId=... → list videos from that playlist
+//  1. channels.list?mine=true → get the uploads playlist ID (cached after first call)
+//  2. playlistItems.list?playlistId=... → list videos from that playlist
 //
 // Quota cost: 2 units on first poll (1 channels + 1 playlistItems), 1 unit on
 // subsequent polls (playlistItems only, since the playlist ID is cached).
@@ -977,10 +977,10 @@ func (p *Poller) pollSuperChat() ([]map[string]interface{}, error) {
 // Requires OAuth 2.0 with the youtube.channel-memberships.creator scope.
 //
 // NOTE: This endpoint requires BOTH:
-//   1. The channel must have channel memberships enabled.
-//   2. The API project must be explicitly approved by Google for access to this
-//      endpoint. Most projects will receive 403 Forbidden without this approval.
-//      Contact your Google/YouTube representative to request access.
+//  1. The channel must have channel memberships enabled.
+//  2. The API project must be explicitly approved by Google for access to this
+//     endpoint. Most projects will receive 403 Forbidden without this approval.
+//     Contact your Google/YouTube representative to request access.
 //
 // Quota cost: 1 unit per call (no separate payment required).
 func (p *Poller) pollMemberships() ([]map[string]interface{}, error) {
