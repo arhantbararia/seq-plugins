@@ -31,6 +31,36 @@ RUN cd youtube_trigger && \
     go mod download && \
     CGO_ENABLED=0 GOOS=linux go build -o /app/youtube_trigger_bin .
 
+# ── github_trigger ────────────────────────────────────────────────────────────
+COPY github_trigger/ ./github_trigger/
+RUN cd github_trigger && \
+    go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/github_trigger_bin .
+
+# ── googlesheets_action ───────────────────────────────────────────────────────
+COPY googlesheets_action/ ./googlesheets_action/
+RUN cd googlesheets_action && \
+    go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/googlesheets_action_bin .
+
+# ── instagram_trigger ─────────────────────────────────────────────────────────
+COPY instagram_trigger/ ./instagram_trigger/
+RUN cd instagram_trigger && \
+    go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/instagram_trigger_bin .
+
+# ── rss_trigger ───────────────────────────────────────────────────────────────
+COPY rss_trigger/ ./rss_trigger/
+RUN cd rss_trigger && \
+    go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/rss_trigger_bin .
+
+# ── x_action ──────────────────────────────────────────────────────────────────
+COPY x_action/ ./x_action/
+RUN cd x_action && \
+    go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/x_action_bin .
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # STAGE 2: Runtime — lightweight Alpine with Nginx
@@ -53,6 +83,11 @@ COPY --from=builder /app/datetime_trigger_bin .
 COPY --from=builder /app/spotify_action_bin .
 COPY --from=builder /app/telegram_action_bin .
 COPY --from=builder /app/youtube_trigger_bin .
+COPY --from=builder /app/github_trigger_bin .
+COPY --from=builder /app/googlesheets_action_bin .
+COPY --from=builder /app/instagram_trigger_bin .
+COPY --from=builder /app/rss_trigger_bin .
+COPY --from=builder /app/x_action_bin .
 
 # Copy startup script, setup script, requirements, and config
 COPY start.sh .
