@@ -60,7 +60,7 @@ func (s *RegistrationService) Register() error {
 		ID:                    pluginID,
 		Name:                  "X Action",
 		ContainerType:         "action",
-		PluginProviderService: "X.com",
+		PluginProviderService: "X",
 		PluginHost:            host,
 		PluginPort:            port,
 		Endpoints: map[string]string{
