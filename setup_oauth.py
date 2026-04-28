@@ -47,7 +47,8 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET auth_types = %s,
+            SET icon = "https://img.logo.dev/youtube.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q",
+                auth_types = %s,
                 metadata_schema = %s
             WHERE name = 'YouTube';
             """,
@@ -70,7 +71,8 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET auth_types = %s,
+            SET icon = "https://img.logo.dev/spotify.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q",
+                auth_types = %s,
                 metadata_schema = %s
             WHERE name = 'Spotify';
             """,
@@ -93,7 +95,8 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET auth_types = %s,
+            SET icon = "https://img.logo.dev/instagram.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q",
+                auth_types = %s,
                 metadata_schema = %s
             WHERE name = 'Instagram';
             """,
@@ -118,7 +121,8 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET auth_types = %s,
+            SET icon = "https://img.logo.dev/x.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q",
+                auth_types = %s,
                 metadata_schema = %s
             WHERE name = 'X.com';
             """,
@@ -141,13 +145,47 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET auth_types = %s,
+            SET icon = "https://img.logo.dev/sheets.google.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q",
+                auth_types = %s,
                 metadata_schema = %s
             WHERE name = 'Google Sheets';
             """,
             (json.dumps(["oauth2"]), json.dumps(googlesheets_metadata))
         )
         print(f"Google Sheets update executed. Rows affected: {cur.rowcount}")
+
+
+
+        ## update telegram provider
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET icon = "https://img.logo.dev/telegram.org?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q",
+            WHERE name = 'Telegram';
+            """
+        )
+        print(f"Telegram plugin update executed. Rows affected: {cur.rowcount}")
+
+        ## update github provider
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET icon = "https://img.logo.dev/github.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q",
+            WHERE name = 'GitHub';
+            """
+        )
+        print(f"Github plugin update executed. Rows affected: {cur.rowcount}")
+
+        ## update rss provider
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET icon = "rss",
+            WHERE name = 'RSS Feed';
+            """
+        )
+        print(f"RSS plugin update executed. Rows affected: {cur.rowcount}")
+
 
         # Commit and close
         conn.commit()
