@@ -1,3 +1,6 @@
 *.exe
 *.bin
 */secrets.txt
+/slack_action
+/whatsapp_action
+

@@ -6,14 +6,14 @@ import sys
 def setup_oauth():
     # Retrieve environment variables
     db_url = os.environ.get("GOAT_DB_URL")
-    youtube_client_id = os.environ.get("YOUTUBE_CLIENT_ID")
-    youtube_client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET")
-    gsheets_client_id = os.environ.get("GSHEETS_CLIENT_ID")
-    gsheets_client_secret = os.environ.get("GSHEETS_CLIENT_SECRET")
-    spotify_id = os.environ.get("SPOTIFY_CLIENT_ID")
-    spotify_secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
-    instagram_id = os.environ.get("INSTAGRAM_CLIENT_ID")
-    instagram_secret = os.environ.get("INSTAGRAM_CLIENT_SECRET")
+    youtube_client_id = os.environ.get("YOUTUBE_CLIENT_ID", "").strip() or None
+    youtube_client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip() or None
+    gsheets_client_id = os.environ.get("GSHEETS_CLIENT_ID", "").strip() or None
+    gsheets_client_secret = os.environ.get("GSHEETS_CLIENT_SECRET", "").strip() or None
+    spotify_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip() or None
+    spotify_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip() or None
+    instagram_id = os.environ.get("INSTAGRAM_CLIENT_ID", "").strip() or None
+    instagram_secret = os.environ.get("INSTAGRAM_CLIENT_SECRET", "").strip() or None
 
     # Validate environment variables
     missing = []
@@ -102,8 +102,8 @@ def setup_oauth():
         print(f"Instagram update executed. Rows affected: {cur.rowcount}")
 
         # 4. Update X.com (Twitter) Provider
-        x_id = os.environ.get("X_CLIENT_ID", os.environ.get("TWITTER_CLIENT_ID", ""))
-        x_secret = os.environ.get("X_CLIENT_SECRET", os.environ.get("TWITTER_CLIENT_SECRET", ""))
+        x_id = os.environ.get("X_CLIENT_ID", os.environ.get("TWITTER_CLIENT_ID", "")).strip() or None
+        x_secret = os.environ.get("X_CLIENT_SECRET", os.environ.get("TWITTER_CLIENT_SECRET", "")).strip() or None
         x_metadata = {
             "oauth": {
                 "client_id": x_id,
