@@ -124,7 +124,7 @@ def setup_oauth():
             SET icon = 'https://img.logo.dev/x.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q&format=png',
                 auth_types = %s,
                 metadata_schema = %s
-            WHERE name = 'X.com';
+            WHERE name = 'X';
             """,
             (json.dumps(["oauth2"]), json.dumps(x_metadata))
         )
