@@ -72,7 +72,7 @@ func (r *RegistrationService) Register() error {
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "Instagram Trigger",
-		ContainerType:         "TRIGGER",
+		ContainerType:         "trigger",
 		PluginProviderService: "Instagram",
 		PluginHost:            host,
 		PluginPort:            port,

@@ -59,7 +59,7 @@ func (s *RegistrationService) Register() error {
 	req := models.RegistrationRequest{
 		ID:                    pluginID,
 		Name:                  "X Action",
-		ContainerType:         "ACTION",
+		ContainerType:         "action",
 		PluginProviderService: "X.com",
 		PluginHost:            host,
 		PluginPort:            port,
