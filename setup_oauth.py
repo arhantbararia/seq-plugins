@@ -160,7 +160,7 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET icon = 'https://img.logo.dev/telegram.org?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q',
+            SET icon = 'https://img.logo.dev/telegram.org?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q'
             WHERE name = 'Telegram';
             """
         )
@@ -170,7 +170,7 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET icon = 'https://img.logo.dev/github.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q',
+            SET icon = 'https://img.logo.dev/github.com?token=pk_HtXb_iGSSyuNM2_Q9y9G2Q'
             WHERE name = 'GitHub';
             """
         )
@@ -180,7 +180,7 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET icon = 'rss',
+            SET icon = 'rss'
             WHERE name = 'RSS Feed';
             """
         )
