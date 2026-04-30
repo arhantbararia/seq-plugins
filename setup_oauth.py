@@ -145,7 +145,7 @@ def setup_oauth():
         cur.execute(
             """
             UPDATE plugin_providers 
-            SET icon = 'sheets',
+            SET icon = 'googlesheets',
                 auth_types = %s,
                 metadata_schema = %s
             WHERE name = 'Google Sheets';
