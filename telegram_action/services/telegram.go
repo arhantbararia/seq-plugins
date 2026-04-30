@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,13 +23,42 @@ const telegramAPIBase = "https://api.telegram.org/bot"
 
 // TelegramService wraps the Telegram Bot API and handles RabbitMQ tasks.
 type TelegramService struct {
-	httpClient *http.Client
+	httpClient   *http.Client
+	retrySeconds int
+	retryCount   int
 }
 
-// NewTelegramService constructs a TelegramService with a default HTTP client.
+// NewTelegramService constructs a TelegramService with a robust HTTP client for HF Spaces.
 func NewTelegramService() *TelegramService {
+	retrySec := 10
+	if val := os.Getenv("RETRY_SECONDS"); val != "" {
+		if s, err := strconv.Atoi(val); err == nil {
+			retrySec = s
+		}
+	}
+	retryCnt := 3
+	if val := os.Getenv("RETRY_COUNT"); val != "" {
+		if c, err := strconv.Atoi(val); err == nil {
+			retryCnt = c
+		}
+	}
+
 	return &TelegramService{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		retrySeconds: retrySec,
+		retryCount:   retryCnt,
+		httpClient: &http.Client{
+			Timeout: 60 * time.Second,
+			Transport: &http.Transport{
+				TLSHandshakeTimeout: 30 * time.Second,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          10,
+				IdleConnTimeout:       90 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		},
 	}
 }
 
@@ -140,7 +172,7 @@ type PublisherProvider interface {
 	Publish(workflowID string, result models.ActionResult) error
 }
 
-func publishResult(publisher PublisherProvider, task models.ActionTask, resultOutput map[string]interface{}, elapsedMs int64, procErr error) {
+func publishResult(publisher PublisherProvider, task models.ActionTask, resultOutput map[string]interface{}, elapsedMs int64, procErr error, status string, retryCount int) {
 	if publisher == nil {
 		return
 	}
@@ -149,17 +181,19 @@ func publishResult(publisher PublisherProvider, task models.ActionTask, resultOu
 		WorkflowID:   task.WorkflowID,
 		Timestamp:    time.Now().UTC(),
 		ResponseTime: elapsedMs,
+		Status:       status,
+		RetryCount:   retryCount,
 	}
 
-	if procErr != nil {
+	if status == "error" && procErr != nil {
 		actionResult.Success = false
-		actionResult.Status = "error"
 		actionResult.Error = procErr.Error()
-	} else {
+	} else if status == "success" {
 		actionResult.Success = true
-		actionResult.Status = "success"
 		actionResult.Output = resultOutput
-		actionResult.RetryCount = 0
+	} else if status == "retrying" && procErr != nil {
+		actionResult.Success = false
+		actionResult.Error = procErr.Error()
 	}
 
 	if pubErr := publisher.Publish(task.WorkflowID, actionResult); pubErr != nil {
@@ -205,31 +239,43 @@ func (s *TelegramService) HandleTaskRouter(cfgProvider ConfigProvider, publisher
 		var resultOutput map[string]interface{}
 		var elapsedMs int64
 
-		switch capability {
-		case "telegram_send_message", "telegram_send_message_capability":
-			resultOutput, elapsedMs, procErr = s.SendMessage(auth, taskCfg)
-		case "telegram_send_photo", "telegram_send_photo_capability":
-			resultOutput, elapsedMs, procErr = s.SendPhoto(auth, taskCfg)
-		case "telegram_send_video", "telegram_send_video_capability":
-			resultOutput, elapsedMs, procErr = s.SendVideo(auth, taskCfg)
-		case "telegram_send_mp3", "telegram_send_mp3_capability":
-			resultOutput, elapsedMs, procErr = s.SendMP3(auth, taskCfg)
-		default:
-			log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Unknown capability key: %s", seq, task.WorkflowID, task.ID, capability)
-			d.Nack(false, false)
-			return
+		// Retry logic
+		for attempt := 0; attempt <= s.retryCount; attempt++ {
+			switch capability {
+			case "telegram_send_message", "telegram_send_message_capability":
+				resultOutput, elapsedMs, procErr = s.SendMessage(auth, taskCfg)
+			case "telegram_send_photo", "telegram_send_photo_capability":
+				resultOutput, elapsedMs, procErr = s.SendPhoto(auth, taskCfg)
+			case "telegram_send_video", "telegram_send_video_capability":
+				resultOutput, elapsedMs, procErr = s.SendVideo(auth, taskCfg)
+			case "telegram_send_mp3", "telegram_send_mp3_capability":
+				resultOutput, elapsedMs, procErr = s.SendMP3(auth, taskCfg)
+			default:
+				log.Printf("[Consumer #%d] [Workflow: %s] [Action: %s] Unknown capability key: %s", seq, task.WorkflowID, task.ID, capability)
+				d.Nack(false, false)
+				return
+			}
+
+			if procErr == nil {
+				// Success
+				publishResult(publisher, task, resultOutput, elapsedMs, nil, "success", attempt)
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Successfully processed %s on attempt %d", seq, task.WorkflowID, instanceID, capability, attempt)
+				d.Ack(false)
+				return
+			}
+
+			// Failure - decide whether to retry
+			if attempt < s.retryCount {
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Error on attempt %d for %s: %v. Retrying in %d seconds...", seq, task.WorkflowID, instanceID, attempt, capability, procErr, s.retrySeconds)
+				publishResult(publisher, task, nil, elapsedMs, procErr, "retrying", attempt+1)
+				time.Sleep(time.Duration(s.retrySeconds) * time.Second)
+			} else {
+				// All retries failed
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] All %d retries failed for %s: %v", seq, task.WorkflowID, instanceID, s.retryCount, capability, procErr)
+				publishResult(publisher, task, nil, elapsedMs, procErr, "error", attempt)
+				d.Nack(false, false) // Don't requeue, we've exhausted retries
+			}
 		}
-
-		publishResult(publisher, task, resultOutput, elapsedMs, procErr)
-
-		if procErr != nil {
-			log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Error processing capability %s: %v", seq, task.WorkflowID, instanceID, capability, procErr)
-			d.Nack(false, true)
-			return
-		}
-
-		log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Successfully processed %s", seq, task.WorkflowID, instanceID, capability)
-		d.Ack(false)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -117,11 +118,23 @@ func NewPoller(triggerID, workflowID string, config models.TriggerConfig, seq ui
 		TriggerConfig:  config,
 		SequenceNumber: seq,
 		Publisher:      pub,
-		httpClient:     &http.Client{Timeout: 30 * time.Second},
-		stopChan:       make(chan struct{}),
-		seenCache:      make([]string, 0, 100),
-		seenSet:        make(map[string]bool),
-		isFirstPoll:    true,
+		httpClient: &http.Client{
+			Timeout: 60 * time.Second,
+			Transport: &http.Transport{
+				TLSHandshakeTimeout: 30 * time.Second,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          10,
+				IdleConnTimeout:       90 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		},
+		stopChan:    make(chan struct{}),
+		seenCache:   make([]string, 0, 100),
+		seenSet:     make(map[string]bool),
+		isFirstPoll: true,
 	}
 }
 

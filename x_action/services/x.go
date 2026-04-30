@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,12 +61,41 @@ const (
 // ── XService ─────────────────────────────────────────────────────────────────
 
 type XService struct {
-	httpClient *http.Client
+	httpClient   *http.Client
+	retrySeconds int
+	retryCount   int
 }
 
 func NewXService() *XService {
+	retrySec := 10
+	if val := os.Getenv("RETRY_SECONDS"); val != "" {
+		if s, err := strconv.Atoi(val); err == nil {
+			retrySec = s
+		}
+	}
+	retryCnt := 3
+	if val := os.Getenv("RETRY_COUNT"); val != "" {
+		if c, err := strconv.Atoi(val); err == nil {
+			retryCnt = c
+		}
+	}
+
 	return &XService{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		retrySeconds: retrySec,
+		retryCount:   retryCnt,
+		httpClient: &http.Client{
+			Timeout: 60 * time.Second,
+			Transport: &http.Transport{
+				TLSHandshakeTimeout: 30 * time.Second,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          10,
+				IdleConnTimeout:       90 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		},
 	}
 }
 
@@ -151,7 +182,7 @@ func resolveTemplates(cfg *models.ActionConfig, payload map[string]interface{}) 
 
 // ── Result publishing ────────────────────────────────────────────────────────
 
-func publishResult(publisher PublisherProvider, task models.ActionTask, resultOutput map[string]interface{}, elapsedMs int64, procErr error) {
+func publishResult(publisher PublisherProvider, task models.ActionTask, resultOutput map[string]interface{}, elapsedMs int64, procErr error, status string, retryCount int) {
 	if publisher == nil {
 		return
 	}
@@ -160,17 +191,19 @@ func publishResult(publisher PublisherProvider, task models.ActionTask, resultOu
 		WorkflowID:   task.WorkflowID,
 		Timestamp:    time.Now().UTC(),
 		ResponseTime: elapsedMs,
+		Status:       status,
+		RetryCount:   retryCount,
 	}
 
-	if procErr != nil {
+	if status == "error" && procErr != nil {
 		actionResult.Success = false
-		actionResult.Status = "error"
 		actionResult.Error = procErr.Error()
-	} else {
+	} else if status == "success" {
 		actionResult.Success = true
-		actionResult.Status = "success"
 		actionResult.Output = resultOutput
-		actionResult.RetryCount = 0
+	} else if status == "retrying" && procErr != nil {
+		actionResult.Success = false
+		actionResult.Error = procErr.Error()
 	}
 
 	if pubErr := publisher.Publish(task.WorkflowID, actionResult); pubErr != nil {
@@ -216,49 +249,64 @@ func (s *XService) HandleTaskRouter(cfgProvider ConfigProvider, publisher Publis
 		var resultOutput map[string]interface{}
 		var elapsedMs int64
 
-		switch capability {
-		case "post_a_tweet":
-			resultOutput, elapsedMs, procErr = s.PostTweet(auth, taskCfg)
-		case "post_a_tweet_with_image":
-			resultOutput, elapsedMs, procErr = s.PostTweetWithImage(auth, taskCfg)
-		default:
-			log.Printf("Unknown capability key: %s", capability)
-			d.Nack(false, false)
-			return
-		}
+		// Retry logic
+		for attempt := 0; attempt <= s.retryCount; attempt++ {
+			switch capability {
+			case "post_a_tweet":
+				resultOutput, elapsedMs, procErr = s.PostTweet(auth, taskCfg)
+			case "post_a_tweet_with_image":
+				resultOutput, elapsedMs, procErr = s.PostTweetWithImage(auth, taskCfg)
+			default:
+				log.Printf("Unknown capability key: %s", capability)
+				d.Nack(false, false)
+				return
+			}
 
-		// Retry once on 401 Unauthorized
-		if procErr != nil && strings.Contains(procErr.Error(), "401") {
-			log.Printf("[XService] Action failed with 401, trying immediate refresh and retry for instance %s", instanceID)
-			newAuth, refreshErr := s.RefreshAccessToken(auth)
-			if refreshErr == nil {
-				for k := range currentCfg.AuthContext {
-					currentCfg.AuthContext[k] = newAuth
-					break
-				}
-				_ = cfgProvider.UpdateAuth(instanceID, currentCfg.AuthContext)
+			// Handle 401 Refresh logic
+			if procErr != nil && strings.Contains(procErr.Error(), "401") {
+				log.Printf("[XService] Action failed with 401, trying immediate refresh and retry for instance %s", instanceID)
+				newAuth, refreshErr := s.RefreshAccessToken(auth)
+				if refreshErr == nil {
+					for k := range currentCfg.AuthContext {
+						currentCfg.AuthContext[k] = newAuth
+						break
+					}
+					_ = cfgProvider.UpdateAuth(instanceID, currentCfg.AuthContext)
+					auth = newAuth
 
-				switch capability {
-				case "post_a_tweet":
-					resultOutput, elapsedMs, procErr = s.PostTweet(newAuth, taskCfg)
-				case "post_a_tweet_with_image":
-					resultOutput, elapsedMs, procErr = s.PostTweetWithImage(newAuth, taskCfg)
+					// Retry immediately after refresh
+					switch capability {
+					case "post_a_tweet":
+						resultOutput, elapsedMs, procErr = s.PostTweet(auth, taskCfg)
+					case "post_a_tweet_with_image":
+						resultOutput, elapsedMs, procErr = s.PostTweetWithImage(auth, taskCfg)
+					}
+				} else {
+					log.Printf("[XService] Refresh failed during retry: %v", refreshErr)
 				}
+			}
+
+			if procErr == nil {
+				// Success
+				publishResult(publisher, task, resultOutput, elapsedMs, nil, "success", attempt)
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Successfully processed %s on attempt %d", seq, task.WorkflowID, instanceID, capability, attempt)
+				d.Ack(false)
+				return
+			}
+
+			// Failure - decide whether to retry
+			if attempt < s.retryCount {
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Error on attempt %d for %s: %v. Retrying in %d seconds...", seq, task.WorkflowID, instanceID, attempt, capability, procErr, s.retrySeconds)
+				publishResult(publisher, task, nil, elapsedMs, procErr, "retrying", attempt+1)
+				time.Sleep(time.Duration(s.retrySeconds) * time.Second)
 			} else {
-				log.Printf("[XService] Refresh failed during retry: %v", refreshErr)
+				// All retries failed
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] All %d retries failed for %s: %v", seq, task.WorkflowID, instanceID, s.retryCount, capability, procErr)
+				publishResult(publisher, task, nil, elapsedMs, procErr, "error", attempt)
+				d.Nack(false, false)
+				return
 			}
 		}
-
-		publishResult(publisher, task, resultOutput, elapsedMs, procErr)
-
-		if procErr != nil {
-			log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Error processing capability %s: %v", seq, task.WorkflowID, instanceID, capability, procErr)
-			d.Nack(false, true)
-			return
-		}
-
-		log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Successfully processed %s", seq, task.WorkflowID, instanceID, capability)
-		d.Ack(false)
 	}
 }
 
