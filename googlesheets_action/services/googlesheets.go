@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,10 +50,13 @@ func NewGoogleSheetsService() *GoogleSheetsService {
 			Timeout: 60 * time.Second,
 			Transport: &http.Transport{
 				TLSHandshakeTimeout: 30 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					dialer := &net.Dialer{
+						Timeout:   30 * time.Second,
+						KeepAlive: 30 * time.Second,
+					}
+					return dialer.DialContext(ctx, "tcp4", addr)
+				},
 				MaxIdleConns:          10,
 				IdleConnTimeout:       90 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
@@ -259,34 +263,34 @@ func publishResult(publisher PublisherProvider, task models.ActionTask, resultOu
 	}
 }
 
-// HandleTaskRouter dynamically routes to the specific capability method based on CapabilityKey
-func (s *GoogleSheetsService) HandleTaskRouter(cfgProvider ConfigProvider, publisher PublisherProvider) func(d amqp.Delivery) {
+// HandleTaskRouter dynamically routes to the specific capability method based on CapabilityKey.
+// It uses a captured ActionConfig (assigned at setup) to ensure the consumer works
+// in its own independent scope.
+func (s *GoogleSheetsService) HandleTaskRouter(cfgProvider ConfigProvider, publisher PublisherProvider, seq uint64, instanceID string, initialCfg models.ActionConfig) func(amqp.Delivery) {
+	currentCfg := initialCfg
+
 	return func(d amqp.Delivery) {
 		var task models.ActionTask
 		if err := json.Unmarshal(d.Body, &task); err != nil {
-			log.Printf("Error unmarshaling task: %v", err)
+			log.Printf("[Consumer #%d] Error unmarshaling task: %v", seq, err)
 			d.Nack(false, false)
 			return
 		}
 
-		cfg, err := cfgProvider.GetConfig(task.WorkflowID)
+		log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Received task: %s", seq, task.WorkflowID, instanceID, task.CapabilityKey)
+
+		// Resolve {{trigger.payload.X}} templates in a COPY of the current config.
+		taskCfg := currentCfg
+		resolveTemplates(&taskCfg, task.Payload)
+
+		auth, err := s.GetValidAuth(instanceID, cfgProvider)
 		if err != nil {
-			log.Printf("Error fetching config for workflow %s: %v", task.WorkflowID, err)
+			log.Printf("[Consumer #%d] Error ensuring valid auth: %v", seq, err)
 			d.Nack(false, false)
 			return
 		}
 
-		// Resolve {{trigger.payload.X}} templates in config using trigger event payload.
-		resolveTemplates(&cfg, task.Payload)
-
-		auth, err := s.GetValidAuth(task.WorkflowID, cfgProvider)
-		if err != nil {
-			log.Printf("Error ensuring valid auth: %v", err)
-			d.Nack(false, false)
-			return
-		}
-
-		capability := cfg.CapabilityKey
+		capability := taskCfg.CapabilityKey
 
 		var procErr error
 		var resultOutput map[string]interface{}
@@ -296,34 +300,34 @@ func (s *GoogleSheetsService) HandleTaskRouter(cfgProvider ConfigProvider, publi
 		for attempt := 0; attempt <= s.retryCount; attempt++ {
 			switch capability {
 			case "googlesheets_update_cell", "googlesheets_update_cell_capability":
-				resultOutput, elapsedMs, procErr = s.UpdateCell(auth, cfg)
+				resultOutput, elapsedMs, procErr = s.UpdateCell(auth, taskCfg)
 			case "googlesheets_add_row", "googlesheets_add_row_capability":
-				resultOutput, elapsedMs, procErr = s.AddRow(auth, cfg)
+				resultOutput, elapsedMs, procErr = s.AddRow(auth, taskCfg)
 			default:
-				log.Printf("Unknown capability key: %s", capability)
+				log.Printf("[Consumer #%d] Unknown capability key: %s", seq, capability)
 				d.Nack(false, false)
 				return
 			}
 
 			// Handle 401 Refresh logic
 			if procErr != nil && strings.Contains(procErr.Error(), "401") {
-				log.Printf("[GoogleSheetsService] Action failed with 401, trying immediate refresh and retry for workflow %s", task.WorkflowID)
+				log.Printf("[GoogleSheetsService] Action failed with 401, trying immediate refresh and retry for instance %s", instanceID)
 				newAuth, refreshErr := s.RefreshAccessToken(auth)
 				if refreshErr == nil {
 					// Update cache
-					for k := range cfg.AuthContext {
-						cfg.AuthContext[k] = newAuth
+					for k := range currentCfg.AuthContext {
+						currentCfg.AuthContext[k] = newAuth
 						break
 					}
-					_ = cfgProvider.UpdateAuth(task.WorkflowID, cfg.AuthContext)
+					_ = cfgProvider.UpdateAuth(instanceID, currentCfg.AuthContext)
 					auth = newAuth
 
 					// Retry immediately after refresh
 					switch capability {
 					case "googlesheets_update_cell", "googlesheets_update_cell_capability":
-						resultOutput, elapsedMs, procErr = s.UpdateCell(auth, cfg)
+						resultOutput, elapsedMs, procErr = s.UpdateCell(auth, taskCfg)
 					case "googlesheets_add_row", "googlesheets_add_row_capability":
-						resultOutput, elapsedMs, procErr = s.AddRow(auth, cfg)
+						resultOutput, elapsedMs, procErr = s.AddRow(auth, taskCfg)
 					}
 				} else {
 					log.Printf("[GoogleSheetsService] Refresh failed during retry: %v", refreshErr)
@@ -333,18 +337,19 @@ func (s *GoogleSheetsService) HandleTaskRouter(cfgProvider ConfigProvider, publi
 			if procErr == nil {
 				// Success
 				publishResult(publisher, task, resultOutput, elapsedMs, nil, "success", attempt)
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Successfully processed %s on attempt %d", seq, task.WorkflowID, instanceID, capability, attempt)
 				d.Ack(false)
 				return
 			}
 
 			// Failure - decide whether to retry
 			if attempt < s.retryCount {
-				log.Printf("[Consumer #%d] [Workflow: %s] Error on attempt %d for %s: %v. Retrying in %d seconds...", 0, task.WorkflowID, attempt, capability, procErr, s.retrySeconds)
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] Error on attempt %d for %s: %v. Retrying in %d seconds...", seq, task.WorkflowID, instanceID, attempt, capability, procErr, s.retrySeconds)
 				publishResult(publisher, task, nil, elapsedMs, procErr, "retrying", attempt+1)
 				time.Sleep(time.Duration(s.retrySeconds) * time.Second)
 			} else {
 				// All retries failed
-				log.Printf("[Consumer #%d] [Workflow: %s] All %d retries failed for %s: %v", 0, task.WorkflowID, s.retryCount, capability, procErr)
+				log.Printf("[Consumer #%d] [Workflow: %s] [Instance: %s] All %d retries failed for %s: %v", seq, task.WorkflowID, instanceID, s.retryCount, capability, procErr)
 				publishResult(publisher, task, nil, elapsedMs, procErr, "error", attempt)
 				d.Nack(false, false)
 				return

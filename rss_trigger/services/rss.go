@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -122,10 +123,13 @@ func NewPoller(triggerID, workflowID string, config models.TriggerConfig, seq ui
 			Timeout: 60 * time.Second,
 			Transport: &http.Transport{
 				TLSHandshakeTimeout: 30 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					dialer := &net.Dialer{
+						Timeout:   30 * time.Second,
+						KeepAlive: 30 * time.Second,
+					}
+					return dialer.DialContext(ctx, "tcp4", addr)
+				},
 				MaxIdleConns:          10,
 				IdleConnTimeout:       90 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,

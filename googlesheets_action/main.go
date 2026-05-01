@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"time"
 )
@@ -29,36 +30,38 @@ var (
 	googleSheetsSvc *services.GoogleSheetsService
 	// resultPublisher handles publishing ActionResults to RabbitMQ
 	resultPublisher *worker.Publisher
+	// consumerCount assigns unique sequence numbers to each worker
+	consumerCount uint64
 )
 
 // workflowConfigProvider implements the services.ConfigProvider interface,
 // allowing RabbitMQ handlers to retrieve configuration for a workflow.
 type workflowConfigProvider struct{}
 
-// GetConfig retrieves the ActionConfig for a given workflow ID from the global store.
-func (p *workflowConfigProvider) GetConfig(workflowID string) (models.ActionConfig, error) {
-	val, ok := configs.Load(workflowID)
+// GetConfig retrieves the ActionConfig for a given instance ID from the global store.
+func (p *workflowConfigProvider) GetConfig(instanceID string) (models.ActionConfig, error) {
+	val, ok := configs.Load(instanceID)
 	if !ok {
-		return models.ActionConfig{}, fmt.Errorf("config not found for workflow %s", workflowID)
+		return models.ActionConfig{}, fmt.Errorf("config not found for instance %s", instanceID)
 	}
 	cfg, ok := val.(models.ActionConfig)
 	if !ok {
-		return models.ActionConfig{}, fmt.Errorf("invalid config type in store for workflow %s", workflowID)
+		return models.ActionConfig{}, fmt.Errorf("invalid config type in store for instance %s", instanceID)
 	}
 	return cfg, nil
 }
 
-func (p *workflowConfigProvider) UpdateAuth(workflowID string, auth map[string]models.AuthData) error {
-	val, ok := configs.Load(workflowID)
+func (p *workflowConfigProvider) UpdateAuth(instanceID string, auth map[string]models.AuthData) error {
+	val, ok := configs.Load(instanceID)
 	if !ok {
-		return fmt.Errorf("config not found for workflow %s", workflowID)
+		return fmt.Errorf("config not found for instance %s", instanceID)
 	}
 	cfg, ok := val.(models.ActionConfig)
 	if !ok {
-		return fmt.Errorf("invalid config type in store for workflow %s", workflowID)
+		return fmt.Errorf("invalid config type in store for instance %s", instanceID)
 	}
 	cfg.AuthContext = auth
-	configs.Store(workflowID, cfg)
+	configs.Store(instanceID, cfg)
 	return nil
 }
 
@@ -163,16 +166,16 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	config := buildActionConfig(payload)
 
-	// Store the config, keyed by workflow ID. This is thread-safe.
-	configs.Store(payload.WorkflowID, config)
+	// Store the config, keyed by action ID.
+	configs.Store(payload.ID, config)
 
 	// The rest of the logic modifies the shared consumers map and needs protection.
 	mu.Lock()
 	defer mu.Unlock()
 
-	// If a consumer for this workflow already exists, stop it before creating a new one.
-	if existingConsumer, ok := consumers[payload.WorkflowID]; ok {
-		log.Printf("[Setup] Stopping existing consumer for workflow %s", payload.WorkflowID)
+	// If a consumer for this instance already exists, stop it before creating a new one.
+	if existingConsumer, ok := consumers[payload.ID]; ok {
+		log.Printf("[Setup] Stopping existing consumer for id %s", payload.ID)
 		existingConsumer.Stop()
 	}
 
@@ -185,38 +188,35 @@ func handleSetup(w http.ResponseWriter, r *http.Request) {
 	// The handler for the consumer needs a way to get the config.
 	provider := &workflowConfigProvider{}
 
-	// The googleSheetsSvc is a global, assumed to be initialized in main().
+	// Create and start new consumer with a sequence number
+	seq := atomic.AddUint64(&consumerCount, 1)
+	log.Printf("[Setup] Consumer #%d assigned to workflow %s queue %s", seq, payload.WorkflowID, payload.QueueName)
+
 	if googleSheetsSvc == nil {
 		googleSheetsSvc = services.NewGoogleSheetsService()
-		log.Println("[Setup] Warning: googleSheetsSvc was not initialized, creating new instance now.")
 	}
-
 	if resultPublisher == nil {
 		resultPublisher = worker.NewPublisher()
-		log.Println("[Setup] Warning: resultPublisher was not initialized, creating new instance now.")
 	}
 
-	taskHandler := googleSheetsSvc.HandleTaskRouter(provider, resultPublisher)
+	taskHandler := googleSheetsSvc.HandleTaskRouter(provider, resultPublisher, seq, payload.ID, config)
 
 	// Create a new consumer for the specified queue.
-	consumerTag := fmt.Sprintf("googlesheets-action-%s", payload.WorkflowID)
+	consumerTag := fmt.Sprintf("googlesheets-action-%s-%s", payload.WorkflowID, payload.ID)
 	consumer := worker.NewConsumer(rabbitmqURL, payload.QueueName, consumerTag, taskHandler)
-
-	// Start the consumer. It runs in its own goroutine and handles reconnections.
 	consumer.Start()
 
-	// Store the new consumer, replacing the old one.
-	consumers[payload.WorkflowID] = consumer
+	consumers[payload.ID] = consumer
 
-	log.Printf("[Setup] Started consumer for queue '%s'", payload.QueueName)
+	log.Printf("[Setup] Started consumer #%d for queue '%s'", seq, payload.QueueName)
 
-	// Respond with success as per the spec.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":    true,
 		"message":    "setup_complete",
 		"queue_name": payload.QueueName,
+		"seq":        seq,
 	})
 }
 
@@ -227,30 +227,41 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[Remove] id=%s workflow=%s", payload.ID, payload.WorkflowID)
+	id := payload.ID
+	workflowID := payload.WorkflowID
 
-	// The key for consumers and configs is WorkflowID
-	if payload.WorkflowID == "" {
-		http.Error(w, "workflow_id is required", http.StatusBadRequest)
-		return
-	}
+	log.Printf("[Remove] id=%s workflow=%s", id, workflowID)
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Stop and remove the consumer
-	if consumer, exists := consumers[payload.WorkflowID]; exists {
-		log.Printf("[Remove] Stopping consumer for workflow %s", payload.WorkflowID)
-		consumer.Stop()
-		delete(consumers, payload.WorkflowID)
-		log.Printf("[Remove] Stopped and removed consumer for workflow %s", payload.WorkflowID)
-	} else {
-		log.Printf("[Remove] No consumer found for workflow %s", payload.WorkflowID)
+	removedCount := 0
+
+	// 1. Try to find by ID
+	if id != "" {
+		if consumer, exists := consumers[id]; exists {
+			log.Printf("[Remove] Stopping consumer for id %s", id)
+			consumer.Stop()
+			delete(consumers, id)
+			configs.Delete(id)
+			removedCount++
+		}
 	}
 
-	// Remove the config
-	configs.Delete(payload.WorkflowID)
-	log.Printf("[Remove] Removed config for workflow %s", payload.WorkflowID)
+	// 2. Fallback/Bulk: remove all matching WorkflowID (best effort, typically when only WorkflowID is provided)
+	if workflowID != "" {
+		// Since we don't store WorkflowID cleanly in the consumer struct right now,
+		// and we key by instance ID, we only do this if it was keyed by workflowID (legacy)
+		if consumer, exists := consumers[workflowID]; exists {
+			log.Printf("[Remove] Stopping legacy consumer for workflow %s", workflowID)
+			consumer.Stop()
+			delete(consumers, workflowID)
+			configs.Delete(workflowID)
+			removedCount++
+		}
+	}
+
+	log.Printf("[Remove] Removed %d configs/consumers", removedCount)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
