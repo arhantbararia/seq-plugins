@@ -154,7 +154,31 @@ def setup_oauth():
         )
         print(f"Google Sheets update executed. Rows affected: {cur.rowcount}")
 
-
+        # 6. Update Slack Provider
+        slack_client_id = os.environ.get("SLACK_CLIENT_ID", "").strip() or None
+        slack_client_secret = os.environ.get("SLACK_CLIENT_SECRET", "").strip() or None
+        slack_metadata = {
+            "oauth": {
+                "client_id": slack_client_id,
+                "client_secret": slack_client_secret,
+                "authorize_url": "https://slack.com/oauth/v2/authorize",
+                "token_url": "https://slack.com/api/oauth.v2.access",
+                "scopes": "chat:write chat:write.public",
+                "redirect_uri": "https://sequels.diy/auth/plugin/callback"
+            }
+        }
+        
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET icon = 'slack',
+                auth_types = %s,
+                metadata_schema = %s
+            WHERE name = 'slack';
+            """,
+            (json.dumps(["oauth2"]), json.dumps(slack_metadata))
+        )
+        print(f"Slack update executed. Rows affected: {cur.rowcount}")
 
         ## update telegram provider
         cur.execute(

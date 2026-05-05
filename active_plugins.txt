@@ -7,6 +7,6 @@ x_action
 instagram_trigger
 googlesheets_action
 rss_trigger
-
+slack_action
 
 
