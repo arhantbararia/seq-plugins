@@ -25,6 +25,12 @@ RUN cd telegram_action && \
     go mod download && \
     CGO_ENABLED=0 GOOS=linux go build -o /app/telegram_action_bin .
 
+# ── slack_action ────────────────────────────────────────────────────────────
+COPY slack_action/ ./slack_action/
+RUN cd slack_action && \
+    go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/slack_action_bin .
+
 # ── youtube_trigger ───────────────────────────────────────────────────────────
 COPY youtube_trigger/ ./youtube_trigger/
 RUN cd youtube_trigger && \
@@ -82,6 +88,7 @@ WORKDIR /app
 COPY --from=builder /app/datetime_trigger_bin .
 COPY --from=builder /app/spotify_action_bin .
 COPY --from=builder /app/telegram_action_bin .
+COPY --from=builder /app/slack_action_bin .
 COPY --from=builder /app/youtube_trigger_bin .
 COPY --from=builder /app/github_trigger_bin .
 COPY --from=builder /app/googlesheets_action_bin .
