@@ -174,7 +174,7 @@ def setup_oauth():
             SET icon = 'slack',
                 auth_types = %s,
                 metadata_schema = %s
-            WHERE name = 'slack';
+            WHERE name = 'Slack';
             """,
             (json.dumps(["oauth2"]), json.dumps(slack_metadata))
         )
