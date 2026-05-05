@@ -36,7 +36,7 @@ func (s *RegistrationService) Register() error {
 
 	reg := models.RegistrationRequest{
 		ID:                    "slack-action-01",
-		Name:                  "slack",
+		Name:                  "Slack Action",
 		ContainerType:         "action",
 		PluginProviderService: "Slack",
 		PluginHost:            host,
