@@ -77,7 +77,7 @@ func (s *RegistrationService) Register() error {
 		ID:                    pluginID,
 		Name:                  "Date & Time Trigger",
 		ContainerType:         "trigger",
-		PluginProviderService: "Date & Time",
+		PluginProviderService: "Datetime",
 		PluginHost:            host,
 		PluginPort:            port,
 		Endpoints: map[string]string{

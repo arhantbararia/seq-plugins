@@ -61,14 +61,15 @@ func (s *RegistrationService) Register() error {
 		ID:                    pluginID,
 		Name:                  "Google Sheets Action",
 		ContainerType:         "action",
-		PluginProviderService: "Google Sheets",
+		PluginProviderService: "Googlesheets",
 		PluginHost:            host,
 		PluginPort:            port,
 		AuthTypes:             []string{"OAUTH2"},
 		Endpoints: map[string]string{
-			"setup":  prefix + "/setup",
-			"remove": prefix + "/remove",
-			"health": prefix + "/health",
+			"setup":    prefix + "/setup",
+			"remove":   prefix + "/remove",
+			"validate": prefix + "/validate",
+			"health":   prefix + "/health",
 		},
 		Capabilities: []models.PluginCapability{
 			{

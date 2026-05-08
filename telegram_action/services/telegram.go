@@ -48,12 +48,12 @@ func NewTelegramService() *TelegramService {
 		retrySeconds: retrySec,
 		retryCount:   retryCnt,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				TLSHandshakeTimeout: 30 * time.Second,
+				TLSHandshakeTimeout: 10 * time.Second,
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 					dialer := &net.Dialer{
-						Timeout:   30 * time.Second,
+						Timeout:   10 * time.Second,
 						KeepAlive: 30 * time.Second,
 					}
 					return dialer.DialContext(ctx, "tcp4", addr)
@@ -78,10 +78,35 @@ func apiURL(botToken, method string) string {
 
 func (s *TelegramService) doPost(endpoint string, params url.Values) (json.RawMessage, int64, error) {
 	start := time.Now()
-	resp, err := s.httpClient.Post(endpoint, "application/x-www-form-urlencoded", strings.NewReader(params.Encode()))
+	
+	var resp *http.Response
+	var err error
+	maxRetries := 3
+	backoff := 2 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		reqBody := strings.NewReader(params.Encode())
+		req, reqErr := http.NewRequest("POST", endpoint, reqBody)
+		if reqErr != nil {
+			elapsed := time.Since(start).Milliseconds()
+			return nil, elapsed, fmt.Errorf("creating request: %w", reqErr)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err = s.httpClient.Do(req)
+		if err == nil {
+			break
+		}
+		if attempt < maxRetries {
+			log.Printf("[TelegramService] HTTP POST failed on attempt %d: %v. Retrying in %v...", attempt, err, backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+
 	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
-		return nil, elapsed, fmt.Errorf("http post failed: %w", err)
+		return nil, elapsed, fmt.Errorf("http post failed after %d retries: %w", maxRetries, err)
 	}
 	defer resp.Body.Close()
 

@@ -59,7 +59,7 @@ func (r *Registration) Register() error {
 		ID:                    pluginID,
 		Name:                  "RSS Trigger",
 		ContainerType:         "TRIGGER",
-		PluginProviderService: "RSS Feed",
+		PluginProviderService: "RSS",
 		PluginHost:            host,
 		PluginPort:            port,
 		Endpoints: map[string]string{

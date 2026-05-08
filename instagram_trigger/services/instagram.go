@@ -134,12 +134,12 @@ func NewPoller(triggerID, workflowID string, config models.TriggerConfig, seq ui
 		SequenceNumber: seq,
 		Publisher:      pub,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				TLSHandshakeTimeout: 30 * time.Second,
+				TLSHandshakeTimeout: 10 * time.Second,
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 					dialer := &net.Dialer{
-						Timeout:   30 * time.Second,
+						Timeout:   10 * time.Second,
 						KeepAlive: 30 * time.Second,
 					}
 					return dialer.DialContext(ctx, "tcp4", addr)
@@ -296,9 +296,25 @@ func (p *Poller) executeRequest(endpoint string, canRetry bool) (map[string]inte
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
+	var resp *http.Response
+	var reqErr error
+	maxRetries := 3
+	backoff := 2 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, reqErr = p.httpClient.Do(req)
+		if reqErr == nil {
+			break
+		}
+		if attempt < maxRetries {
+			log.Printf("[Poller #%d] [Workflow: %s] HTTP request failed on attempt %d: %v. Retrying in %v...", p.SequenceNumber, p.WorkflowID, attempt, reqErr, backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+
+	if reqErr != nil {
+		return nil, fmt.Errorf("executing request after %d retries: %w", maxRetries, reqErr)
 	}
 	defer resp.Body.Close()
 

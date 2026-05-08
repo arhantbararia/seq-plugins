@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"sync/atomic"
 
@@ -271,6 +272,36 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleValidate(w http.ResponseWriter, r *http.Request) {
+	var payload SetupPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("[Validate] Error: invalid JSON: %v", err)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	config := buildActionConfig(payload)
+
+	// Check if this ID already exists and has identical config
+	val, ok := configs.Load(payload.ID)
+	isDuplicate := false
+	if ok {
+		existingConfig := val.(models.ActionConfig)
+		if reflect.DeepEqual(existingConfig.RawConfig, config.RawConfig) &&
+			reflect.DeepEqual(existingConfig.AuthContext, config.AuthContext) &&
+			existingConfig.CapabilityKey == config.CapabilityKey {
+			isDuplicate = true
+			log.Printf("[Validate] Duplicate detected for id=%s", payload.ID)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_duplicate": isDuplicate,
+	})
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	active := len(consumers)
@@ -324,6 +355,7 @@ func main() {
 	prefix := "/googlesheets/action"
 	http.HandleFunc(prefix+"/setup", handleSetup)
 	http.HandleFunc(prefix+"/remove", handleRemove)
+	http.HandleFunc(prefix+"/validate", handleValidate)
 	http.HandleFunc(prefix+"/health", handleHealth)
 
 	port := getPort()
