@@ -61,7 +61,7 @@ func (s *RegistrationService) Register() error {
 		ID:                    pluginID,
 		Name:                  "Google Sheets Action",
 		ContainerType:         "action",
-		PluginProviderService: "Googlesheets",
+		PluginProviderService: "Google Sheets",
 		PluginHost:            host,
 		PluginPort:            port,
 		AuthTypes:             []string{"OAUTH2"},
