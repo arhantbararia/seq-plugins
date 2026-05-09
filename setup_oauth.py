@@ -205,7 +205,7 @@ def setup_oauth():
             """
             UPDATE plugin_providers 
             SET icon = 'rss'
-            WHERE name = 'RSS Feed';
+            WHERE name = 'RSS';
             """
         )
         print(f"RSS plugin update executed. Rows affected: {cur.rowcount}")
