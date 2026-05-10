@@ -50,6 +50,7 @@ func NewTelegramService() *TelegramService {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
 				TLSHandshakeTimeout: 10 * time.Second,
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 					dialer := &net.Dialer{

@@ -122,6 +122,7 @@ func NewPoller(triggerID, workflowID string, config models.TriggerConfig, seq ui
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 			Transport: &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
 				TLSHandshakeTimeout: 30 * time.Second,
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 					dialer := &net.Dialer{
