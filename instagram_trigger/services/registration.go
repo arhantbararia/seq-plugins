@@ -87,7 +87,7 @@ func (r *RegistrationService) Register() error {
 			{
 				UniqueKey:     "any_new_photo_by_you",
 				Name:          "Any New Photo by you",
-				Description:   "Triggers when a new photo is posted by you. Requires an Instagram Business or Creator Account.",
+				Description:   "Triggers when a new photo is posted by you. Requires an Instagram Business or Creator Account. BETA NOTICE: Requires adding you to our tester group. Reach us out on instagram @sequels.diy",
 				ComponentType: "TRIGGER",
 				ConfigSchema:  map[string]interface{}{},
 				OutputSchema: map[string]interface{}{
@@ -100,7 +100,7 @@ func (r *RegistrationService) Register() error {
 			{
 				UniqueKey:     "new_photo_by_you_with_hashtag",
 				Name:          "New photo by you with specific hashtag",
-				Description:   "Triggers when a new photo is posted by you with a specific hashtag. Requires an Instagram Business or Creator Account.",
+				Description:   "Triggers when a new photo is posted by you with a specific hashtag. Requires an Instagram Business or Creator Account. BETA NOTICE: Requires adding you to our tester group. Reach us out on instagram @sequels.diy",
 				ComponentType: "TRIGGER",
 				ConfigSchema:  map[string]interface{}{"hashtag": "string"},
 				OutputSchema: map[string]interface{}{
@@ -113,7 +113,7 @@ func (r *RegistrationService) Register() error {
 			{
 				UniqueKey:     "any_new_video_by_you",
 				Name:          "Any New Video by you",
-				Description:   "Triggers when a new video is posted by you. Requires an Instagram Business or Creator Account.",
+				Description:   "Triggers when a new video is posted by you. Requires an Instagram Business or Creator Account. BETA NOTICE: Requires adding you to our tester group. Reach us out on instagram @sequels.diy",
 				ComponentType: "TRIGGER",
 				ConfigSchema:  map[string]interface{}{},
 				OutputSchema: map[string]interface{}{
@@ -126,7 +126,7 @@ func (r *RegistrationService) Register() error {
 			{
 				UniqueKey:     "new_video_by_you_with_hashtag",
 				Name:          "New video by you with specific hashtag",
-				Description:   "Triggers when a new video is posted by you with a specific hashtag. Requires an Instagram Business or Creator Account.",
+				Description:   "Triggers when a new video is posted by you with a specific hashtag. Requires an Instagram Business or Creator Account. BETA NOTICE: Requires adding you to our tester group. Reach us out on instagram @sequels.diy",
 				ComponentType: "TRIGGER",
 				ConfigSchema:  map[string]interface{}{"hashtag": "string"},
 				OutputSchema: map[string]interface{}{
