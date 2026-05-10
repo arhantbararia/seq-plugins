@@ -159,6 +159,51 @@ func NewPoller(triggerID, workflowID string, config models.TriggerConfig, seq ui
 
 // ── Token refresh ────────────────────────────────────────────────────────────
 
+// UpgradeAccessToken exchanges a short-lived (1-hour) access token for a long-lived (60-day) token.
+// The initial OAuth login provides a short-lived token. If we don't upgrade it immediately,
+// it will expire in 1 hour and cannot be refreshed, causing a Code 190 Invalid OAuth Token error.
+func (p *Poller) UpgradeAccessToken() error {
+	clientSecret := os.Getenv("INSTAGRAM_CLIENT_SECRET")
+	if clientSecret == "" {
+		clientSecret = os.Getenv("FACEBOOK_CLIENT_SECRET")
+	}
+
+	if clientSecret == "" {
+		log.Printf("[Poller #%d] [Workflow: %s] Skipping token upgrade: missing INSTAGRAM_CLIENT_SECRET", p.SequenceNumber, p.WorkflowID)
+		return fmt.Errorf("missing client secret")
+	}
+
+	endpoint := fmt.Sprintf("%s/access_token?grant_type=ig_exchange_token&client_secret=%s&access_token=%s",
+		instagramAPIBase, url.QueryEscape(clientSecret), url.QueryEscape(p.Token))
+
+	resp, err := p.httpClient.Get(endpoint)
+	if err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var tokenResp struct {
+			AccessToken string `json:"access_token"`
+			ExpiresIn   int    `json:"expires_in"`
+		}
+		if err := json.Unmarshal(body, &tokenResp); err == nil && tokenResp.AccessToken != "" {
+			p.Token = tokenResp.AccessToken
+			p.Expiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+			log.Printf("[Poller #%d] [Workflow: %s] Instagram short-lived token upgraded to long-lived (ig_exchange_token). New expiry: %v",
+				p.SequenceNumber, p.WorkflowID, p.Expiry)
+			p.persistRefreshedAuth()
+			return nil
+		}
+	}
+
+	if resp != nil {
+		body, _ := io.ReadAll(resp.Body)
+		// If it fails (e.g. token is already long-lived), just log and gracefully continue
+		log.Printf("[Poller #%d] [Workflow: %s] Token upgrade skipped or failed: HTTP %d, %s", p.SequenceNumber, p.WorkflowID, resp.StatusCode, string(body))
+		resp.Body.Close()
+	}
+
+	return fmt.Errorf("failed to upgrade access token")
+}
+
 // RefreshAccessToken refreshes an Instagram/Facebook long-lived token.
 // Instagram long-lived tokens are valid for 60 days and can be refreshed
 // before they expire using:
@@ -257,6 +302,10 @@ func (p *Poller) persistRefreshedAuth() {
 func (p *Poller) Start() {
 	log.Printf("[Poller #%d] [Workflow: %s] Starting trigger=%s capability=%s",
 		p.SequenceNumber, p.WorkflowID, p.TriggerID, p.CapabilityKey)
+
+	// Proactively attempt to upgrade the token to a long-lived 60-day token.
+	// This prevents the short-lived 1-hour token from dying during extended polling.
+	_ = p.UpgradeAccessToken()
 
 	go func() {
 		ticker := time.NewTicker(2 * time.Minute)
