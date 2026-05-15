@@ -116,6 +116,10 @@ echo "Waiting 15 seconds for plugin binaries to stabilize before running databas
 sleep 15
 python3 setup_oauth.py
 
+# ── Start Proxy Rotator ─────────────────────────────────────────────────────
+echo "Starting proxy rotator in background..."
+python3 proxy_rotator.py &
+
 # ── Start Nginx in the foreground ────────────────────────────────────────────
 echo "Starting Nginx on port 7860..."
 nginx -g 'daemon off;'
