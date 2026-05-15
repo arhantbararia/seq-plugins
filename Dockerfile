@@ -73,14 +73,14 @@ RUN cd x_action && \
 # ═══════════════════════════════════════════════════════════════════════════════
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates nginx python3 py3-pip
+RUN apk --no-cache add ca-certificates nginx python3 py3-pip tinyproxy
 
 # Hugging Face requirement: run as non-root user with UID 1000
 RUN adduser -D -u 1000 user
 
 # Prepare Nginx directories writable by non-root user
 RUN mkdir -p /var/lib/nginx/tmp /var/log/nginx /run/nginx && \
-    chown -R user:user /var/lib/nginx /var/log/nginx /run/nginx /etc/nginx
+    chown -R user:user /var/lib/nginx /var/log/nginx /run/nginx /etc/nginx /app
 
 WORKDIR /app
 

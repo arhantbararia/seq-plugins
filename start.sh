@@ -94,6 +94,23 @@ NGINX_FOOTER
 echo "nginx.conf generated successfully."
 cat /etc/nginx/nginx.conf
 
+# ── Start Proxy Rotator & Tinyproxy ──────────────────────────────────────────
+# 1. Initialize the first proxy config
+echo "Initializing first proxy..."
+python3 proxy_rotator.py --init
+
+# 2. Start tinyproxy in background
+echo "Starting tinyproxy..."
+tinyproxy -c /app/tinyproxy.conf
+
+# 3. Set global proxy for all plugins started below
+export HTTP_PROXY=http://127.0.0.1:8888
+export HTTPS_PROXY=http://127.0.0.1:8888
+
+# 4. Start the endless rotation in background
+echo "Starting background proxy rotator..."
+python3 proxy_rotator.py &
+
 # ── Start Plugin Binaries ────────────────────────────────────────────────────
 PORT=$BASE_PORT
 for ENTRY in $PLUGINS; do
@@ -116,10 +133,7 @@ echo "Waiting 15 seconds for plugin binaries to stabilize before running databas
 sleep 15
 python3 setup_oauth.py
 
-# ── Start Proxy Rotator ─────────────────────────────────────────────────────
-echo "Starting proxy rotator in background..."
-python3 proxy_rotator.py &
-
 # ── Start Nginx in the foreground ────────────────────────────────────────────
 echo "Starting Nginx on port 7860..."
 nginx -g 'daemon off;'
+
