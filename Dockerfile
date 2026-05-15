@@ -101,6 +101,7 @@ COPY start.sh .
 COPY active_plugins.txt .
 COPY setup_oauth.py .
 COPY requirements.txt .
+COPY proxy_rotator.py .
 
 # Install Python requirements
 RUN pip install --no-cache-dir -r requirements.txt --break-system-packages
