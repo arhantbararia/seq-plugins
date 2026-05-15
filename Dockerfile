@@ -79,7 +79,7 @@ RUN apk --no-cache add ca-certificates nginx python3 py3-pip tinyproxy
 RUN adduser -D -u 1000 user
 
 # Prepare Nginx directories writable by non-root user
-RUN mkdir -p /var/lib/nginx/tmp /var/log/nginx /run/nginx && \
+RUN mkdir -p /var/lib/nginx/tmp /var/log/nginx /run/nginx /app && \
     chown -R user:user /var/lib/nginx /var/log/nginx /run/nginx /etc/nginx /app
 
 WORKDIR /app
