@@ -19,17 +19,20 @@ PID_FILE = "/app/tinyproxy.pid"
 
 def fetch_proxies():
     """Downloads the list of proxies from Webshare API."""
-    try:
-        logging.info("Fetching fresh proxy list from Webshare...")
-        response = requests.get(API_URL, timeout=15)
-        response.raise_for_status()
-        proxies = response.text.strip().split('\n')
-        valid_proxies = [p.strip() for p in proxies if p.strip()]
-        logging.info(f"Successfully retrieved {len(valid_proxies)} proxies.")
-        return valid_proxies
-    except Exception as e:
-        logging.error(f"Error fetching proxy list: {e}")
-        return []
+    for attempt in range(3):
+        try:
+            logging.info(f"Fetching fresh proxy list from Webshare (Attempt {attempt+1}/3)...")
+            response = requests.get(API_URL, timeout=30)
+            response.raise_for_status()
+            proxies = response.text.strip().split('\n')
+            valid_proxies = [p.strip() for p in proxies if p.strip()]
+            logging.info(f"Successfully retrieved {len(valid_proxies)} proxies.")
+            return valid_proxies
+        except Exception as e:
+            logging.error(f"Error fetching proxy list: {e}")
+            if attempt < 2:
+                time.sleep(5)
+    return []
 
 def update_tinyproxy_upstream(proxy_line):
     """Updates tinyproxy.conf with the new upstream proxy and reloads tinyproxy."""
@@ -67,6 +70,17 @@ def update_tinyproxy_upstream(proxy_line):
         logging.error(f"Failed to update tinyproxy config: {e}")
         return False
 
+def setup_tinyproxy_without_upstream():
+    """Writes the base template without an upstream proxy."""
+    try:
+        with open(CONFIG_TEMPLATE, "r") as f:
+            template = f.read()
+        with open(CONFIG_FILE, "w") as f:
+            f.write(template)
+        logging.info("Set up tinyproxy config without upstream proxy.")
+    except Exception as e:
+        logging.error(f"Failed to set up initial tinyproxy config: {e}")
+
 def main():
     # If run with --init, just do one update and exit
     is_init = "--init" in sys.argv
@@ -76,8 +90,9 @@ def main():
         
         if not proxies:
             if is_init:
-                logging.error("Failed to fetch initial proxies. Exiting.")
-                sys.exit(1)
+                logging.warning("Failed to fetch initial proxies. Falling back to direct connection.")
+                setup_tinyproxy_without_upstream()
+                sys.exit(0)
             logging.warning("Proxy list empty, retrying in 60 seconds...")
             time.sleep(60)
             continue
