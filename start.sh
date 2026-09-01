@@ -45,22 +45,23 @@ XDG_CACHE_HOME=/tmp/.cache \
 OPENWA_PID=$!
 echo "OpenWA server launched with PID ${OPENWA_PID}"
 
-# Wait for the OpenWA server to become healthy (max 120 seconds for Chromium startup)
-echo "Waiting for OpenWA server to become ready..."
-OPENWA_READY=false
-for i in $(seq 1 60); do
-    if curl -sf http://127.0.0.1:${OPENWA_PORT}/api/health/ready > /dev/null 2>&1; then
-        OPENWA_READY=true
-        echo "✓ OpenWA server is ready! (took ~${i}×2 seconds)"
-        break
-    fi
-    sleep 2
-done
+(
+    echo "Waiting for OpenWA server to become ready..."
+    OPENWA_READY=false
+    for i in $(seq 1 60); do
+        if curl -sf http://127.0.0.1:${OPENWA_PORT}/api/health/ready > /dev/null 2>&1; then
+            OPENWA_READY=true
+            echo "✓ OpenWA server is ready! (took ~${i}×2 seconds)"
+            break
+        fi
+        sleep 2
+    done
 
-if [ "$OPENWA_READY" = false ]; then
-    echo "⚠ WARNING: OpenWA server did not report ready within 120s. Continuing anyway..."
-    echo "  (The server may still be initializing Chromium. It will become available shortly.)"
-fi
+    if [ "$OPENWA_READY" = false ]; then
+        echo "⚠ WARNING: OpenWA server did not report ready within 120s. Continuing anyway..."
+        echo "  (The server may still be initializing Chromium. It will become available shortly.)"
+    fi
+) &
 
 # ── Plugin Registry (Automated) ──────────────────────────────────────────────
 PLUGINS=""
@@ -207,9 +208,11 @@ done
 
 # ── Dynamic OAuth Setup ──────────────────────────────────────────────────────
 # Run after binaries have started to ensure they are ready for configuration
-echo "Waiting 15 seconds for plugin binaries to stabilize before running database setup..."
-sleep 15
-python3 setup_oauth.py
+(
+    echo "Waiting 15 seconds for plugin binaries to stabilize before running database setup..."
+    sleep 15
+    python3 setup_oauth.py
+) &
 
 # ── Start Nginx in the foreground ────────────────────────────────────────────
 echo "Starting Nginx on port 7860..."
