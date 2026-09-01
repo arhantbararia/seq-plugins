@@ -14,3 +14,16 @@ googlesheets_action/Dockerfile
 instagram_trigger/Dockerfile
 rss_trigger/Dockerfile
 x_action/Dockerfile
+openWA_action/Dockerfile
+
+# OpenWA server build artifacts (rebuilt inside Docker)
+internal/OpenWA/node_modules/
+internal/OpenWA/dist/
+internal/OpenWA/data/
+internal/OpenWA/.env
+internal/OpenWA/.env.local
+internal/OpenWA/.env.*.local
+internal/OpenWA/dashboard/node_modules/
+internal/OpenWA/dashboard/dist/
+internal/OpenWA/coverage/
+internal/OpenWA/.git/

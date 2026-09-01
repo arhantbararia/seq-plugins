@@ -8,7 +8,6 @@ instagram_trigger
 googlesheets_action
 rss_trigger
 slack_action
-whatsapp_action
 openWA_action
 
 

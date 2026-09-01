@@ -2,11 +2,65 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Sequels Plugin Engine — Unified Start Script
 # Dynamically assigns ports, generates nginx.conf, and starts all plugins.
+# Now also launches the bundled OpenWA WhatsApp server.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
 
 BASE_PORT=8081
+OPENWA_PORT=2785
+
+# ── OpenWA Server Startup ────────────────────────────────────────────────────
+echo "══════════════════════════════════════════════════════════════"
+echo "  Starting OpenWA WhatsApp Server on port ${OPENWA_PORT}..."
+echo "══════════════════════════════════════════════════════════════"
+
+# Create writable directories for OpenWA data, sessions, and Chromium
+mkdir -p /app/openwa-data/sessions /app/openwa-data/media /tmp/.config /tmp/.cache
+
+# Clean stale Chromium singleton locks from previous unclean shutdowns
+rm -f /app/openwa-data/sessions/*/Singleton* 2>/dev/null || true
+
+# Launch the OpenWA Node.js server in the background.
+# Environment variables (API_MASTER_KEY, ENGINE_TYPE, etc.) are set via HF Secrets.
+# Defaults are provided here for safety.
+PORT=${OPENWA_PORT} \
+NODE_ENV="${NODE_ENV:-production}" \
+DATABASE_TYPE="${DATABASE_TYPE:-sqlite}" \
+DATABASE_NAME="${DATABASE_NAME:-/app/openwa-data/openwa.sqlite}" \
+DATABASE_SYNCHRONIZE="${DATABASE_SYNCHRONIZE:-true}" \
+ENGINE_TYPE="${ENGINE_TYPE:-whatsapp-web.js}" \
+SESSION_DATA_PATH="${SESSION_DATA_PATH:-/app/openwa-data/sessions}" \
+PUPPETEER_HEADLESS="${PUPPETEER_HEADLESS:-true}" \
+PUPPETEER_ARGS="${PUPPETEER_ARGS:---no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu}" \
+AUTO_START_SESSIONS="${AUTO_START_SESSIONS:-true}" \
+STORAGE_TYPE="${STORAGE_TYPE:-local}" \
+STORAGE_LOCAL_PATH="${STORAGE_LOCAL_PATH:-/app/openwa-data/media}" \
+REDIS_ENABLED="${REDIS_ENABLED:-false}" \
+HOME=/app/openwa-data \
+XDG_CONFIG_HOME=/tmp/.config \
+XDG_CACHE_HOME=/tmp/.cache \
+  node /app/openwa-server/dist/main &
+
+OPENWA_PID=$!
+echo "OpenWA server launched with PID ${OPENWA_PID}"
+
+# Wait for the OpenWA server to become healthy (max 120 seconds for Chromium startup)
+echo "Waiting for OpenWA server to become ready..."
+OPENWA_READY=false
+for i in $(seq 1 60); do
+    if curl -sf http://127.0.0.1:${OPENWA_PORT}/api/health/ready > /dev/null 2>&1; then
+        OPENWA_READY=true
+        echo "✓ OpenWA server is ready! (took ~${i}×2 seconds)"
+        break
+    fi
+    sleep 2
+done
+
+if [ "$OPENWA_READY" = false ]; then
+    echo "⚠ WARNING: OpenWA server did not report ready within 120s. Continuing anyway..."
+    echo "  (The server may still be initializing Chromium. It will become available shortly.)"
+fi
 
 # ── Plugin Registry (Automated) ──────────────────────────────────────────────
 PLUGINS=""
@@ -54,6 +108,22 @@ http {
         location /health {
             return 200 'Sequels Plugin Engine is alive';
             add_header Content-Type text/plain;
+        }
+
+        # ── OpenWA Server reverse proxy ──────────────────────────────
+        # Strips /openwa-server prefix and forwards to the local Node.js process.
+        # External callers (goat-backend) use: https://<hf-space>/openwa-server/api/...
+        location /openwa-server/ {
+            proxy_pass http://127.0.0.1:2785/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 120s;
+            proxy_connect_timeout 10s;
+        }
+        location = /openwa-server {
+            return 301 $scheme://$host$request_uri/;
         }
 
 NGINX_HEADER
