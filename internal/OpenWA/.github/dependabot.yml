@@ -1,0 +1,61 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      major:
+        update-types:
+          - major
+    labels:
+      - dependencies
+    ignore:
+      # Ignore major bumps for packages that need manual migration
+      # Uncomment specific packages below if you want to skip them entirely
+      # - dependency-name: "typescript"
+      #   update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /dashboard
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      major:
+        update-types:
+          - major
+    labels:
+      - dependencies
+      - dashboard
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - ci
+
+  # Base images (Dockerfile) + the compose stack's pinned images (socket-proxy, postgres,
+  # redis, minio). Keeps the security-critical docker-socket-proxy pin and the datastore
+  # images moving instead of drifting on a stale tag.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
