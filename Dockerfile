@@ -151,12 +151,16 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 # Hugging Face requirement: run as non-root user with UID 1000
-# (node:22-slim already has a 'node' user but not at UID 1000)
-RUN useradd -m -u 1000 user || true
+# In node:22-slim, user 'node' already exists with UID 1000. Rename 'node' to 'user':
+RUN if id "node" >/dev/null 2>&1; then \
+        usermod -l user node && groupmod -n user node && usermod -d /home/user -m user; \
+    else \
+        useradd -m -u 1000 user; \
+    fi
 
 # Prepare writable directories for Nginx and OpenWA
-RUN mkdir -p /var/lib/nginx/body /var/log/nginx /run /app/openwa-server /app/openwa-data/sessions /app/openwa-data/media && \
-    chown -R user:user /var/lib/nginx /var/log/nginx /run /etc/nginx /app
+RUN mkdir -p /var/lib/nginx/body /var/lib/nginx/proxy /var/lib/nginx/fastcgi /var/log/nginx /run/nginx /app/openwa-server /app/openwa-data/sessions /app/openwa-data/media && \
+    chown -R user:user /var/lib/nginx /var/log/nginx /run/nginx /etc/nginx /app
 
 WORKDIR /app
 
