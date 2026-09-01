@@ -194,7 +194,7 @@ COPY tinyproxy.conf.template .
 
 # Install Python requirements
 RUN pip install --no-cache-dir -r requirements.txt --break-system-packages
-
+#Install permissions
 RUN chmod +x start.sh && chown -R user:user /app
 
 # OpenWA environment defaults (can be overridden via HF Secrets)
