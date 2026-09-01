@@ -27,8 +27,12 @@ func RegisterPlugin() error {
 		port = "8088" // New port for OpenWA plugin
 	}
 
-	pluginID := os.Getenv("PLUGIN_ID")
-	if pluginID == "" {
+	// Build a unique ID: HOSTNAME is shared across all plugins in a unified container,
+	// so we append a plugin-specific suffix to ensure each gets its own DB row.
+	pluginID := os.Getenv("HOSTNAME")
+	if pluginID != "" {
+		pluginID = pluginID + "-openwa-action"
+	} else {
 		pluginID = host + ":" + port + "-openwa-action"
 	}
 
@@ -37,7 +41,7 @@ func RegisterPlugin() error {
 		ID:                    pluginID,
 		Name:                  "OpenWA Action",
 		ContainerType:         "action",
-		PluginProviderService: "OpenWA WhatsApp",
+		PluginProviderService: "OpenWA",
 		PluginHost:            host,
 		PluginPort:            port,
 		Endpoints: map[string]string{
@@ -45,7 +49,7 @@ func RegisterPlugin() error {
 			"remove": prefix + "/remove",
 			"health": prefix + "/health",
 		},
-		AuthTypes: []string{"API_KEY"},
+		AuthTypes: []string{"mobile_pairing"},
 		Capabilities: []models.PluginCapability{
 			{
 				UniqueKey:     "openwa_send_text",
@@ -319,7 +323,7 @@ func RegisterPlugin() error {
 		return fmt.Errorf("failed to marshal registration request: %v", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/plugins/register", executorURL)
+	url := fmt.Sprintf("%s/register", executorURL)
 	resp, err := http.Post(url, "application/json", bytes.NewBuffer(payload))
 	if err != nil {
 		return fmt.Errorf("failed to send registration request: %v", err)

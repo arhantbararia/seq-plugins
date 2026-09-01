@@ -210,6 +210,18 @@ def setup_oauth():
         )
         print(f"RSS plugin update executed. Rows affected: {cur.rowcount}")
 
+        ## update openwa provider
+        cur.execute(
+            """
+            UPDATE plugin_providers 
+            SET icon = 'whatsapp',
+                auth_types = %s
+            WHERE name = 'OpenWA' OR name = 'OpenWA WhatsApp';
+            """,
+            (json.dumps(["mobile_pairing"]),)
+        )
+        print(f"OpenWA plugin update executed. Rows affected: {cur.rowcount}")
+
 
         # Commit and close
         conn.commit()
