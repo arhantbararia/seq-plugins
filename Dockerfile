@@ -67,11 +67,11 @@ RUN cd x_action && \
     go mod download && \
     CGO_ENABLED=0 GOOS=linux go build -o /app/x_action_bin .
 
-# ── whatsapp_action ──────────────────────────────────────────────────────────
-COPY whatsapp_action/ ./whatsapp_action/
-RUN cd whatsapp_action && \
-    go mod download && \
-    CGO_ENABLED=0 GOOS=linux go build -o /app/whatsapp_action_bin .
+# # ── whatsapp_action TO DO──────────────────────────────────────────────────────────
+# COPY whatsapp_action/ ./whatsapp_action/
+# RUN cd whatsapp_action && \
+#     go mod download && \
+#     CGO_ENABLED=0 GOOS=linux go build -o /app/whatsapp_action_bin .
 
 # ── openWA_action ────────────────────────────────────────────────────────────
 COPY openWA_action/ ./openWA_action/
