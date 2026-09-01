@@ -67,6 +67,18 @@ RUN cd x_action && \
     go mod download && \
     CGO_ENABLED=0 GOOS=linux go build -o /app/x_action_bin .
 
+# ── whatsapp_action ──────────────────────────────────────────────────────────
+COPY whatsapp_action/ ./whatsapp_action/
+RUN cd whatsapp_action && \
+    go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/whatsapp_action_bin .
+
+# ── openWA_action ────────────────────────────────────────────────────────────
+COPY openWA_action/ ./openWA_action/
+RUN cd openWA_action && \
+    go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/openWA_action_bin .
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # STAGE 2: Runtime — lightweight Alpine with Nginx
@@ -95,6 +107,8 @@ COPY --from=builder /app/googlesheets_action_bin .
 COPY --from=builder /app/instagram_trigger_bin .
 COPY --from=builder /app/rss_trigger_bin .
 COPY --from=builder /app/x_action_bin .
+COPY --from=builder /app/whatsapp_action_bin .
+COPY --from=builder /app/openWA_action_bin .
 
 # Copy startup script, setup script, requirements, and config
 COPY start.sh .
