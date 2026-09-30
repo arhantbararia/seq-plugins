@@ -6,4 +6,5 @@
 trigger-dev-guide.md
 action-dev-guide.md
 internal/OpenWA/docs/
-*.psd
+*.psd
+secrets.json

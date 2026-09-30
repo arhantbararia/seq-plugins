@@ -1,0 +1,99 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Sequels Plugin Engine — Docker Compose (Split Architecture)
+#
+# Container 1 (plugins): Go binaries + Nginx + Tinyproxy  (~200MB RAM)
+#   → Buildable directly on the 1GB Oracle VM
+#
+# Container 2 (openwa):  OpenWA NestJS + Chromium          (~500MB RAM)
+#   → Must be pre-built on a machine with more RAM (e.g., your Windows PC)
+#     then pushed to Docker Hub. The VM only pulls and runs it.
+#
+# Both containers share a Docker network so Nginx can proxy to OpenWA.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+services:
+  # ── Go Plugins + Nginx Gateway ───────────────────────────────────────────────
+  plugins:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugins
+    container_name: sequels-plugins
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    environment:
+      # Docker Compose network: OpenWA is reachable at hostname "openwa"
+      - OPENWA_HOST=openwa
+      - OPENWA_PORT=2785
+      # Pass through all env vars from .env file
+      - EXECUTOR_URL=${EXECUTOR_URL}
+      - GOAT_DB_URL=${GOAT_DB_URL}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-seq_internal_secret}
+      - OPENWA_BASE_URL=http://openwa:2785
+      - OPENWA_API_KEY=${OPENWA_API_KEY}
+      # OAuth credentials for setup_oauth.py
+      - YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID}
+      - YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET}
+      - GSHEETS_CLIENT_ID=${GSHEETS_CLIENT_ID}
+      - GSHEETS_CLIENT_SECRET=${GSHEETS_CLIENT_SECRET}
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - INSTAGRAM_CLIENT_ID=${INSTAGRAM_CLIENT_ID}
+      - INSTAGRAM_CLIENT_SECRET=${INSTAGRAM_CLIENT_SECRET}
+      - X_CLIENT_ID=${X_CLIENT_ID}
+      - X_CLIENT_SECRET=${X_CLIENT_SECRET}
+      - SLACK_CLIENT_ID=${SLACK_CLIENT_ID}
+      - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET}
+    depends_on:
+      openwa:
+        condition: service_started
+    networks:
+      - sequels-net
+
+  # ── OpenWA WhatsApp Server (Node.js + Chromium) ──────────────────────────────
+  openwa:
+    # PRE-BUILT IMAGE: Build this on your Windows PC and push to Docker Hub:
+    #   cd internal/OpenWA
+    #   docker build -t YOUR_DOCKERHUB_USER/sequels-openwa .
+    #   docker push YOUR_DOCKERHUB_USER/sequels-openwa
+    #
+    # Then replace the line below with your image:
+    #   image: YOUR_DOCKERHUB_USER/sequels-openwa
+    image: ${OPENWA_IMAGE:-sequels-openwa}
+    container_name: sequels-openwa
+    restart: unless-stopped
+    environment:
+      - PORT=2785
+      - NODE_ENV=production
+      - DATABASE_TYPE=${DATABASE_TYPE:-sqlite}
+      - DATABASE_NAME=${DATABASE_NAME:-/app/data/openwa.sqlite}
+      - DATABASE_SYNCHRONIZE=${DATABASE_SYNCHRONIZE:-true}
+      - ENGINE_TYPE=${ENGINE_TYPE:-whatsapp-web.js}
+      - SESSION_DATA_PATH=/app/data/sessions
+      - PUPPETEER_HEADLESS=true
+      - PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu
+      - AUTO_START_SESSIONS=${AUTO_START_SESSIONS:-true}
+      - STORAGE_TYPE=${STORAGE_TYPE:-local}
+      - STORAGE_LOCAL_PATH=/app/data/media
+      - REDIS_ENABLED=${REDIS_ENABLED:-false}
+      - API_MASTER_KEY=${API_MASTER_KEY}
+    volumes:
+      - openwa-data:/app/data
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2785/api/health/ready"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - sequels-net
+
+volumes:
+  openwa-data:
+    driver: local
+
+networks:
+  sequels-net:
+    driver: bridge

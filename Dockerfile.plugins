@@ -1,6 +1,9 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 1: Build all Go plugin binaries
+# Dockerfile.plugins — Go Plugin Binaries + Nginx + Tinyproxy
+# Lightweight image that can be built on a 1GB RAM VM (no Node.js/Chromium)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# ── STAGE 1: Build all Go plugin binaries ─────────────────────────────────────
 FROM golang:1.25-alpine AS builder
 
 RUN apk --no-cache add ca-certificates
@@ -67,12 +70,6 @@ RUN cd x_action && \
     go mod download && \
     CGO_ENABLED=0 GOOS=linux go build -o /app/x_action_bin .
 
-# # ── whatsapp_action TO DO──────────────────────────────────────────────────────────
-# COPY whatsapp_action/ ./whatsapp_action/
-# RUN cd whatsapp_action && \
-#     go mod download && \
-#     CGO_ENABLED=0 GOOS=linux go build -o /app/whatsapp_action_bin .
-
 # ── openWA_action ────────────────────────────────────────────────────────────
 COPY openWA_action/ ./openWA_action/
 RUN cd openWA_action && \
@@ -80,92 +77,30 @@ RUN cd openWA_action && \
     CGO_ENABLED=0 GOOS=linux go build -o /app/openWA_action_bin .
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 2: Build the OpenWA Node.js server
-# ═══════════════════════════════════════════════════════════════════════════════
-FROM node:22-slim AS openwa-builder
+# ── STAGE 2: Lightweight runtime (no Node.js, no Chromium) ────────────────────
+FROM debian:bookworm-slim
 
-# Build tools for native npm modules (bcrypt, better-sqlite3, etc.)
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /openwa
-
-# Copy package files first for layer caching
-COPY internal/OpenWA/package*.json ./
-
-# Install ALL dependencies (devDependencies needed for nest build + vite build)
-RUN npm ci --include=dev
-
-# Copy source code
-COPY internal/OpenWA/ .
-
-# Build NestJS API (dist/) and dashboard SPA (dashboard/dist/)
-# NODE_OPTIONS limits heap to 512MB to prevent OOM on low-RAM VMs
-RUN NODE_OPTIONS="--max-old-space-size=512" npm run build && \
-    cd dashboard && npm ci --include=dev && NODE_OPTIONS="--max-old-space-size=512" npm run build
-
-# Prune devDependencies for the production copy
-RUN npm ci --omit=dev && npm cache clean --force
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 3: Runtime — Node.js + Chromium + Go binaries + Nginx
-# ═══════════════════════════════════════════════════════════════════════════════
-FROM node:22-slim
-
-# Install Chromium, Nginx, Python, and runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    fonts-liberation \
-    libappindicator3-1 \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    xdg-utils \
-    dumb-init \
-    curl \
-    procps \
     nginx \
     python3 \
     python3-pip \
     tinyproxy \
+    curl \
+    procps \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Chromium/Puppeteer configuration
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+# Create app user
+RUN useradd -m -u 1000 user
 
-# Hugging Face requirement: run as non-root user with UID 1000
-# In node:22-slim, user 'node' already exists with UID 1000. Rename 'node' to 'user':
-RUN if id "node" >/dev/null 2>&1; then \
-        usermod -l user node && groupmod -n user node && usermod -d /home/user -m user; \
-    else \
-        useradd -m -u 1000 user; \
-    fi
-
-# Prepare writable directories for Nginx and OpenWA
-RUN mkdir -p /var/lib/nginx/body /var/lib/nginx/proxy /var/lib/nginx/fastcgi /var/log/nginx /run/nginx /app/openwa-server /app/openwa-data/sessions /app/openwa-data/media && \
+# Prepare writable directories
+RUN mkdir -p /var/lib/nginx/body /var/lib/nginx/proxy /var/lib/nginx/fastcgi \
+    /var/log/nginx /run/nginx /app && \
     chown -R user:user /var/lib/nginx /var/log/nginx /run/nginx /etc/nginx /app
 
 WORKDIR /app
 
-# ── Copy Go plugin binaries (statically linked, work on any Linux) ────────────
+# Copy Go plugin binaries
 COPY --from=builder /app/datetime_trigger_bin .
 COPY --from=builder /app/spotify_action_bin .
 COPY --from=builder /app/telegram_action_bin .
@@ -176,17 +111,10 @@ COPY --from=builder /app/googlesheets_action_bin .
 COPY --from=builder /app/instagram_trigger_bin .
 COPY --from=builder /app/rss_trigger_bin .
 COPY --from=builder /app/x_action_bin .
-# COPY --from=builder /app/whatsapp_action_bin .
 COPY --from=builder /app/openWA_action_bin .
 
-# ── Copy OpenWA server from builder ──────────────────────────────────────────
-COPY --from=openwa-builder /openwa/dist ./openwa-server/dist
-COPY --from=openwa-builder /openwa/dashboard/dist ./openwa-server/dashboard/dist
-COPY --from=openwa-builder /openwa/node_modules ./openwa-server/node_modules
-COPY --from=openwa-builder /openwa/package.json ./openwa-server/package.json
-
-# ── Copy startup scripts and config ─────────────────────────────────────────
-COPY start.sh .
+# Copy startup scripts and config
+COPY start-plugins.sh ./start.sh
 COPY active_plugins.txt .
 COPY setup_oauth.py .
 COPY requirements.txt .
@@ -195,15 +123,9 @@ COPY tinyproxy.conf.template .
 
 # Install Python requirements
 RUN pip install --no-cache-dir -r requirements.txt --break-system-packages
-#Install permissions
+
 RUN chmod +x start.sh && chown -R user:user /app
 
-# OpenWA environment defaults (can be overridden via HF Secrets)
-ENV HOME=/app/openwa-data
-ENV XDG_CONFIG_HOME=/tmp/.config
-ENV XDG_CACHE_HOME=/tmp/.cache
-
-# Switch to non-root user
 USER user
 
 EXPOSE 7860
