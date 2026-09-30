@@ -1,14 +1,13 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sequels Plugin Engine — Docker Compose (Split Architecture)
 #
-# Container 1 (plugins): Go binaries + Nginx + Tinyproxy  (~200MB RAM)
-#   → Buildable directly on the 1GB Oracle VM
+# Container 1 (openwa):  OpenWA NestJS + Chromium          (~500MB RAM at runtime)
+# Container 2 (plugins): Go binaries + Nginx + Tinyproxy   (~200MB RAM at runtime)
 #
-# Container 2 (openwa):  OpenWA NestJS + Chromium          (~500MB RAM)
-#   → Must be pre-built on a machine with more RAM (e.g., your Windows PC)
-#     then pushed to Docker Hub. The VM only pulls and runs it.
-#
-# Both containers share a Docker network so Nginx can proxy to OpenWA.
+# IMPORTANT: On a 1GB RAM VM, build these SERIALLY (not in parallel):
+#   docker compose build openwa    # builds first (Node.js/TypeScript — memory heavy)
+#   docker compose build plugins   # builds second (Go — lightweight)
+#   docker compose up -d
 # ═══════════════════════════════════════════════════════════════════════════════
 
 services:
@@ -52,14 +51,9 @@ services:
 
   # ── OpenWA WhatsApp Server (Node.js + Chromium) ──────────────────────────────
   openwa:
-    # PRE-BUILT IMAGE: Build this on your Windows PC and push to Docker Hub:
-    #   cd internal/OpenWA
-    #   docker build -t YOUR_DOCKERHUB_USER/sequels-openwa .
-    #   docker push YOUR_DOCKERHUB_USER/sequels-openwa
-    #
-    # Then replace the line below with your image:
-    #   image: YOUR_DOCKERHUB_USER/sequels-openwa
-    image: ${OPENWA_IMAGE:-sequels-openwa}
+    build:
+      context: .
+      dockerfile: Dockerfile.openwa
     container_name: sequels-openwa
     restart: unless-stopped
     environment:
